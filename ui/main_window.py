@@ -55,12 +55,13 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.is_pinned = True
         self.is_expanded = False
-        self.compact_size = QSize(80, 160)
-        self.expanded_size = QSize(400, 350)
+        self.compact_width = 80
+        self.expanded_width = 480 # compact_width + result_view_width
+        self.window_height = 400
         self.threadpool = QThreadPool()
         print(f"Multithreading with maximum {self.threadpool.maxThreadCount()} threads")
         self.setup_ui()
-        self.hide_result_view(animated=False) # Start in compact mode
+        self.result_view_widget.hide() # Start in compact mode
 
     def setup_ui(self):
         self.setWindowTitle("QuizGazer")
@@ -70,31 +71,36 @@ class MainWindow(QMainWindow):
             Qt.Tool
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setGeometry(100, 100, self.compact_size.width(), self.compact_size.height())
+        self.setGeometry(100, 100, self.compact_width, self.window_height)
 
         # Main widget and layout
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        self.layout = QVBoxLayout(self.central_widget)
-        self.layout.setContentsMargins(10, 10, 10, 10)
+        # Use QHBoxLayout for side-by-side icon bar and result view
+        self.main_layout = QHBoxLayout(self.central_widget)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
         
         # Style for the window background
         self.central_widget.setStyleSheet("""
-            QWidget {
-                background-color: rgba(240, 240, 240, 0.85);
+            QWidget#central_widget {
+                background-color: rgba(240, 240, 240, 0.9);
                 border-radius: 10px;
                 border: 1px solid rgba(0, 0, 0, 0.1);
             }
         """)
+        self.central_widget.setObjectName("central_widget")
+
 
         # --- Common Styles ---
         self.base_button_style = """
             QPushButton {{
                 font-size: 16px;
-                background-color: rgba(0, 0, 0, 0.05);
-                border-radius: 15px;
+                background-color: rgba(240, 240, 240, 0.05);
+                border-radius: 8px;
                 color: #333;
                 padding: 5px;
+                margin: 5px;
             }}
             QPushButton:hover {{
                 background-color: rgba(0, 0, 0, 0.1);
@@ -111,11 +117,12 @@ class MainWindow(QMainWindow):
             }
         """
 
-        # --- Icon View Widgets ---
-        self.icon_view_widget = QWidget()
-        self.icon_view_widget.setStyleSheet("background-color: transparent; border: none;")
-        icon_layout = QVBoxLayout(self.icon_view_widget)
-        icon_layout.setContentsMargins(0,0,0,0)
+        # --- Left Icon Bar ---
+        self.icon_bar_widget = QWidget()
+        self.icon_bar_widget.setFixedWidth(self.compact_width)
+        self.icon_bar_widget.setStyleSheet("background-color: rgba(0, 0, 0, 0.05); border-radius: 0px;")
+        icon_layout = QVBoxLayout(self.icon_bar_widget)
+        icon_layout.setContentsMargins(10,10,10,10)
         
         self.capture_button = QPushButton("📸")
         self.capture_button.setFixedSize(50, 50)
@@ -125,74 +132,61 @@ class MainWindow(QMainWindow):
         self.pin_button.setFixedSize(30, 30)
         self.pin_button.setStyleSheet(self.base_button_style + "QPushButton { color: green; }")
         
-        self.exit_button_compact = QPushButton("✕")
-        self.exit_button_compact.setFixedSize(30, 30)
-        self.exit_button_compact.setStyleSheet(self.exit_button_style)
+        self.exit_button = QPushButton("✕")
+        self.exit_button.setFixedSize(30, 30)
+        self.exit_button.setStyleSheet(self.exit_button_style)
 
-        icon_layout.addWidget(self.capture_button, alignment=Qt.AlignCenter)
-        icon_layout.addWidget(self.pin_button, alignment=Qt.AlignCenter)
-        icon_layout.addWidget(self.exit_button_compact, alignment=Qt.AlignCenter)
+        icon_layout.addWidget(self.capture_button, alignment=Qt.AlignTop | Qt.AlignHCenter)
+        icon_layout.addWidget(self.pin_button, alignment=Qt.AlignTop | Qt.AlignHCenter)
+        icon_layout.addStretch()
+        icon_layout.addWidget(self.exit_button, alignment=Qt.AlignBottom | Qt.AlignHCenter)
         
-        # --- Result View Widgets (initially hidden) ---
+        # --- Right Result View ---
         self.result_view_widget = QWidget()
-        self.result_view_widget.setStyleSheet("background-color: transparent; border: none;")
-        result_layout = QVBoxLayout(self.result_view_widget)
-        result_layout.setContentsMargins(0,0,0,0)
+        result_view_layout = QVBoxLayout(self.result_view_widget)
+        result_view_layout.setContentsMargins(10,10,10,10)
 
         question_label = QLabel("Question (editable):")
-        self.question_input = QLineEdit()
+        self.question_input = QTextEdit()
         self.question_input.setStyleSheet("border: 1px solid #cccccc; padding: 5px; background-color: white; border-radius: 5px;")
-
+        
         answer_label = QLabel("Answer:")
         self.answer_display = QTextEdit()
         self.answer_display.setReadOnly(True)
         self.answer_display.setStyleSheet("background-color: #f9f9f9; border: 1px solid #cccccc; padding: 5px; border-radius: 5px;")
-
-        separator = QFrame()
-        separator.setFrameShape(QFrame.HLine)
-        separator.setFrameShadow(QFrame.Sunken)
-
-        button_layout = QHBoxLayout()
+        
+        # Bottom button layout for result view
+        bottom_button_layout = QHBoxLayout()
         self.get_answer_button = QPushButton("Get New Answer")
         self.copy_answer_button = QPushButton("Copy Answer")
-        self.continue_button = QPushButton("Continue") # New button
         self.back_button = QPushButton("Back")
-        self.exit_button_expanded = QPushButton("Exit")
-
-        # Apply common style to result view buttons
+        
         self.get_answer_button.setStyleSheet(self.base_button_style)
         self.copy_answer_button.setStyleSheet(self.base_button_style)
-        self.continue_button.setStyleSheet(self.base_button_style)
         self.back_button.setStyleSheet(self.base_button_style)
-        self.exit_button_expanded.setStyleSheet(self.exit_button_style)
-        
-        button_layout.addStretch()
-        button_layout.addWidget(self.get_answer_button)
-        button_layout.addWidget(self.copy_answer_button)
-        button_layout.addWidget(self.continue_button)
-        button_layout.addWidget(self.back_button)
-        button_layout.addWidget(self.exit_button_expanded)
 
-        result_layout.addWidget(question_label)
-        result_layout.addWidget(self.question_input)
-        result_layout.addWidget(answer_label)
-        result_layout.addWidget(self.answer_display)
-        result_layout.addWidget(separator)
-        result_layout.addLayout(button_layout)
+        bottom_button_layout.addStretch()
+        bottom_button_layout.addWidget(self.get_answer_button)
+        bottom_button_layout.addWidget(self.copy_answer_button)
+        bottom_button_layout.addWidget(self.back_button)
 
-        # Add both views to the main layout
-        self.layout.addWidget(self.icon_view_widget)
-        self.layout.addWidget(self.result_view_widget)
+        result_view_layout.addWidget(question_label)
+        result_view_layout.addWidget(self.question_input)
+        result_view_layout.addWidget(answer_label)
+        result_view_layout.addWidget(self.answer_display)
+        result_view_layout.addLayout(bottom_button_layout)
+
+        # Add widgets to main layout
+        self.main_layout.addWidget(self.icon_bar_widget)
+        self.main_layout.addWidget(self.result_view_widget)
 
         # Connect signals
         self.capture_button.clicked.connect(self.on_capture_clicked)
         self.pin_button.clicked.connect(self.toggle_pin)
+        self.exit_button.clicked.connect(QApplication.instance().quit)
         self.get_answer_button.clicked.connect(self.get_new_answer)
         self.copy_answer_button.clicked.connect(self.copy_answer)
-        self.continue_button.clicked.connect(self.on_capture_clicked) # Connect to capture
         self.back_button.clicked.connect(self.hide_result_view)
-        self.exit_button_compact.clicked.connect(QApplication.instance().quit)
-        self.exit_button_expanded.clicked.connect(QApplication.instance().quit)
 
         # Make window draggable
         self.old_pos = self.pos()
@@ -217,7 +211,7 @@ class MainWindow(QMainWindow):
 
     def on_question_ready(self, question_text):
         """Handles the result from get_question_from_image."""
-        self.question_input.setText(question_text)
+        self.question_input.setPlainText(question_text)
         self.get_initial_answer()
 
     def on_answer_ready(self, answer_text):
@@ -231,36 +225,38 @@ class MainWindow(QMainWindow):
 
     def show_result_view(self, initial_question_text=""):
         if self.is_expanded:
-            self.question_input.setText(initial_question_text)
+            self.question_input.setPlainText(initial_question_text)
             self.answer_display.setText("Getting answer...")
             return
             
         self.is_expanded = True
-        
-        self.question_input.setText(initial_question_text)
+        self.result_view_widget.show()
+        self.question_input.setPlainText(initial_question_text)
         self.answer_display.setText("Getting answer...")
-
-        self.icon_view_widget.setVisible(False)
-        self.result_view_widget.setVisible(True)
+        self.animate_size(QSize(self.expanded_width, self.window_height))
         
-        self.animate_size(self.expanded_size)
+        self.get_initial_answer()
 
     def hide_result_view(self, animated=True):
-        if not self.is_expanded and animated:
+        if not self.is_expanded and not animated:
+             self.resize(self.compact_width, self.window_height)
+             self.result_view_widget.hide()
+             return
+
+        if not self.is_expanded:
             return
+
         self.is_expanded = False
-        
-        self.icon_view_widget.setVisible(True)
-        self.result_view_widget.setVisible(False)
+        self.result_view_widget.hide()
         if animated:
-            self.animate_size(self.compact_size)
+            self.animate_size(QSize(self.compact_width, self.window_height))
         else:
-            self.resize(self.compact_size)
+            self.resize(self.compact_width, self.window_height)
 
     def get_initial_answer(self):
-        question = self.question_input.text()
+        question = self.question_input.toPlainText()
         if not question.strip() or "Extracting" in question:
-            return # Don't get answer if question is not ready
+            return
         self.answer_display.setText("Getting answer...")
         
         worker = Worker(get_answer_from_text, question)
@@ -269,7 +265,7 @@ class MainWindow(QMainWindow):
         self.threadpool.start(worker)
 
     def get_new_answer(self):
-        question = self.question_input.text()
+        question = self.question_input.toPlainText()
         if not question.strip():
             self.answer_display.setText("Please enter a question.")
             return
@@ -304,11 +300,16 @@ class MainWindow(QMainWindow):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self.old_pos = event.globalPosition().toPoint()
-            event.accept()
+            # Check if the press is on the icon bar to allow dragging
+            if self.icon_bar_widget.geometry().contains(event.pos()):
+                 self.old_pos = event.globalPosition().toPoint()
+                 event.accept()
+            else:
+                event.ignore()
+
 
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.LeftButton:
+        if event.buttons() == Qt.LeftButton and self.old_pos:
             delta = QPoint(event.globalPosition().toPoint() - self.old_pos)
             self.move(self.x() + delta.x(), self.y() + delta.y())
             self.old_pos = event.globalPosition().toPoint()
