@@ -9,8 +9,8 @@ def get_model_config(service_type):
         service_type (str): The type of service, either 'vlm' or 'llm'.
 
     Returns:
-        dict: A dictionary containing 'api_key', 'model_name', and 'base_url'.
-              Returns None if the section is not found or key is missing.
+        dict: A dictionary containing 'api_key', 'model_name', 'base_url', 'proxy', and optionally 'llm_provider'.
+               Returns None if the section is not found or key is missing.
     """
     if service_type not in ['vlm', 'llm']:
         raise ValueError("service_type must be either 'vlm' or 'llm'")
@@ -31,10 +31,16 @@ def get_model_config(service_type):
     api_key = config.get(service_type, 'api_key', fallback=None)
     model_name = config.get(service_type, 'model_name', fallback=None)
     base_url = config.get(service_type, 'base_url', fallback=None)
+    proxy = config.get(service_type, 'proxy', fallback=None)
+    llm_provider = None
+    if service_type == 'llm':
+        llm_provider = config.get('llm', 'llm_provider', fallback='gemini')
 
-    # Treat an empty string for base_url as None
+    # Treat an empty string for base_url or proxy as None
     if base_url is not None and not base_url.strip():
         base_url = None
+    if proxy is not None and not proxy.strip():
+        proxy = None
 
     if not api_key or f'YOUR_{service_type.upper()}_API_KEY_HERE' in api_key:
         print(f"Error: API key for [{service_type}] not set in config.ini.")
@@ -44,8 +50,14 @@ def get_model_config(service_type):
         print(f"Error: model_name for [{service_type}] not set in config.ini.")
         return None
 
-    return {
+    config_data = {
         'api_key': api_key,
         'model_name': model_name,
-        'base_url': base_url
+        'base_url': base_url,
+        'proxy': proxy
     }
+
+    if llm_provider:
+        config_data['llm_provider'] = llm_provider
+
+    return config_data

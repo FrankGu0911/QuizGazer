@@ -1,5 +1,6 @@
 import mss
 import mss.tools
+import os,time
 from PIL import Image
 import io
 
@@ -41,6 +42,12 @@ def take_screenshot():
         # Save the image to a bytes buffer
         img_byte_arr = io.BytesIO()
         img.save(img_byte_arr, format='PNG')
+        if not os.path.exists("screenshot"):
+            os.makedirs("screenshot")
+        cur_time=time.strftime("%Y-%m-%d_%H-%M-%S")
+        screen_path = f"./screenshot/{cur_time}.png"
+        with open(screen_path, "wb") as f:
+            img.save(f,format='PNG')
         img_byte_arr = img_byte_arr.getvalue()
         
         return img_byte_arr
