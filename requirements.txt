@@ -3,6 +3,6 @@ mss
 langchain
 langchain-openai
 pillow
-google-generativeai
+google-genai
 langchain-google-genai
 langchain-community

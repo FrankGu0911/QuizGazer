@@ -1,12 +1,8 @@
 import base64
 import httpx
-import os
+import os,time,logging
+from google.genai import Client,types
 from langchain_openai import ChatOpenAI
-from langchain_google_genai import ChatGoogleGenerativeAI
-from google.ai.generativelanguage_v1beta.types import Tool as GenAITool
-from langchain.tools import Tool
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate
 from langchain.schema.messages import HumanMessage, SystemMessage
 from utils.config_manager import get_model_config
 
@@ -86,7 +82,7 @@ def get_question_from_image(image_bytes):
         return f"An error occurred while communicating with the VLM: {e}"
 
 
-def get_answer_from_text(question_text):
+def get_answer_from_text(question_text, force_search=False):
     """
     Sends a question text to the configured LLM to get an answer.
 
@@ -104,42 +100,39 @@ def get_answer_from_text(question_text):
     chat = None
 
     if provider == 'gemini':
-        proxy = llm_config.get('proxy')
-        original_proxy = os.environ.get('https_proxy')
-        if proxy:
-            os.environ['https_proxy'] = proxy
-            
         try:
-            # 1. 初始化 ChatGoogleGenerativeAI 模型
-            init_kwargs = {
-                'model': llm_config.get('model_name', 'gemini-pro'), # 确保有默认模型
-                'google_api_key': llm_config['api_key'],
-                'timeout': 30,
+            client_options = {
+                "api_key": llm_config.get('google_api_key') or llm_config.get('api_key')
             }
-            chat = ChatGoogleGenerativeAI(**init_kwargs)
+            client_options["http_options"] = {'base_url': llm_config.get('base_url',"https://generativelanguage.googleapis.com/v1beta/openai/")}
 
-            # 2. 定义要使用的原生工具列表
-            tools = [GenAITool(google_search={})]
-
-            # 3. 直接调用模型
-            messages = [
-                SystemMessage(content="You are a helpful assistant. Provide a concise and accurate answer to the user's question. Use the search tool if you need to find the latest information.使用中文回答。注意题目来源于OCR结果，可能会有识别错误，请注意甄别"),
-                HumanMessage(content=question_text)
-            ]
-            response = chat.invoke(messages, tools=tools)
-
-            # 4. 直接从响应中获取内容
-            return response.content
-        
+            genai_client = Client(**client_options)
+            
+            model_name = llm_config.get('model_name', 'gemini-2.5-flash')
+            # model = genai.GenerativeModel(model_name)
+            cur_time = time.strftime("%Y-%m-%d_%H-%M-%S")
+            system_instruction = f"You are a helpful assistant. Provide a concise and accurate answer to the user's question. Use the search tool if you need to find the latest information. 现在时间是{cur_time}。请注意**始终使用中文回答**。注意题目来源于OCR结果，可能会有识别错误，请注意甄别."
+            if force_search:
+                system_instruction += " 必须使用搜索工具寻找答案"
+            content = question_text,
+            response = genai_client.models.generate_content(
+                model=model_name,
+                contents=content,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    tools=[
+                        types.Tool(
+                            google_search=types.GoogleSearch()
+                        )
+                    ],
+                    
+                ),
+            )
+            
+            print(f"Response from LLM: {response}")
+            return response.text
         except Exception as e:
-            return f"An error occurred while communicating with the LLM: {e}"
-        finally:
-            # Restore original proxy setting after the call
-            if proxy:
-                if original_proxy:
-                    os.environ['https_proxy'] = original_proxy
-                elif 'https_proxy' in os.environ:
-                    del os.environ['https_proxy']
+            return f"An error occurred while communicating with the Gemini API: {e}"
 
     else:
         # For other providers, use the existing ChatOpenAI setup.
@@ -157,12 +150,17 @@ def get_answer_from_text(question_text):
             http_client=http_client
         )
         try:
+            system_prompt = "You are a helpful assistant. Provide a concise and accurate answer to the user's question.使用中文回答。"
+            if force_search:
+                logging.warning("OpenAI compatibility mode: force_search is not usable")
+                # system_prompt += " 必须使用搜索工具寻找答案"
             response = chat.invoke(
                 [
-                    SystemMessage(content="You are a helpful assistant. Provide a concise and accurate answer to the user's question.使用中文回答。"),
+                    SystemMessage(content=system_prompt),
                     HumanMessage(content=question_text),
                 ]
             )
+            print(f"Response from LLM: {response}")
             return response.content
         except Exception as e:
             return f"An error occurred while communicating with the LLM: {e}"

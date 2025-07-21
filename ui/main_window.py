@@ -1,7 +1,7 @@
 import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget,
-    QLineEdit, QTextEdit, QLabel, QHBoxLayout, QFrame
+    QLineEdit, QTextEdit, QLabel, QHBoxLayout, QFrame, QCheckBox,QStyleFactory 
 )
 from PySide6.QtCore import (Qt, QPoint, QPropertyAnimation, QEasingCurve, QSize,
                             QRunnable, Slot, Signal, QObject, QThreadPool)
@@ -94,20 +94,21 @@ class MainWindow(QMainWindow):
 
         # --- Common Styles ---
         self.base_button_style = """
-            QPushButton {{
+            QPushButton {
                 font-size: 16px;
-                background-color: rgba(240, 240, 240, 0.05);
+                background-color: #EAEAEA; /* Light gray background */
+                border: 1px solid #D0D0D0; /* Light border */
                 border-radius: 8px;
-                color: #333;
+                color: #333; /* Dark text */
                 padding: 5px;
                 margin: 5px;
-            }}
-            QPushButton:hover {{
-                background-color: rgba(0, 0, 0, 0.1);
-            }}
-            QPushButton:pressed {{
-                background-color: rgba(0, 0, 0, 0.15);
-            }}
+            }
+            QPushButton:hover {
+                background-color: #DCDCDC; /* Slightly darker on hover */
+            }
+            QPushButton:pressed {
+                background-color: #C8C8C8; /* Darker when pressed */
+            }
         """
         self.capture_button_style = self.base_button_style.replace("15px", "25px").replace("16px", "24px")
         self.exit_button_style = self.base_button_style + """
@@ -138,6 +139,11 @@ class MainWindow(QMainWindow):
 
         icon_layout.addWidget(self.capture_button, alignment=Qt.AlignTop | Qt.AlignHCenter)
         icon_layout.addWidget(self.pin_button, alignment=Qt.AlignTop | Qt.AlignHCenter)
+        
+        self.force_search_checkbox = QCheckBox("🌐")
+        self.force_search_checkbox.setStyleSheet("QCheckBox { color: #333; } QCheckBox::indicator { width: 15px; height: 15px; }")
+        icon_layout.addWidget(self.force_search_checkbox, alignment=Qt.AlignTop | Qt.AlignHCenter)
+
         icon_layout.addStretch()
         icon_layout.addWidget(self.exit_button, alignment=Qt.AlignBottom | Qt.AlignHCenter)
         
@@ -147,13 +153,15 @@ class MainWindow(QMainWindow):
         result_view_layout.setContentsMargins(10,10,10,10)
 
         question_label = QLabel("Question (editable):")
+        question_label.setStyleSheet("color: #333;")
         self.question_input = QTextEdit()
-        self.question_input.setStyleSheet("border: 1px solid #cccccc; padding: 5px; background-color: white; border-radius: 5px;")
+        self.question_input.setStyleSheet("border: 1px solid #cccccc; padding: 5px; background-color: white; color: #333; border-radius: 5px;")
         
         answer_label = QLabel("Answer:")
+        answer_label.setStyleSheet("color: #333;")
         self.answer_display = QTextEdit()
         self.answer_display.setReadOnly(True)
-        self.answer_display.setStyleSheet("background-color: #f9f9f9; border: 1px solid #cccccc; padding: 5px; border-radius: 5px;")
+        self.answer_display.setStyleSheet("background-color: #f9f9f9; border: 1px solid #cccccc; padding: 5px; color: #333; border-radius: 5px;")
         
         # Bottom button layout for result view
         bottom_button_layout = QHBoxLayout()
@@ -259,7 +267,8 @@ class MainWindow(QMainWindow):
             return
         self.answer_display.setText("Getting answer...")
         
-        worker = Worker(get_answer_from_text, question)
+        force_search = self.force_search_checkbox.isChecked()
+        worker = Worker(get_answer_from_text, question, force_search=force_search)
         worker.signals.result.connect(self.on_answer_ready)
         worker.signals.error.connect(self.on_ai_error)
         self.threadpool.start(worker)
@@ -272,7 +281,8 @@ class MainWindow(QMainWindow):
             
         self.answer_display.setText("Getting new answer...")
         
-        worker = Worker(get_answer_from_text, question)
+        force_search = self.force_search_checkbox.isChecked()
+        worker = Worker(get_answer_from_text, question, force_search=force_search)
         worker.signals.result.connect(self.on_answer_ready)
         worker.signals.error.connect(self.on_ai_error)
         self.threadpool.start(worker)
@@ -317,6 +327,7 @@ class MainWindow(QMainWindow):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    app.setStyle(QStyleFactory.create("Fusion")) 
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

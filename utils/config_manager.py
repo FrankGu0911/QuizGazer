@@ -9,8 +9,8 @@ def get_model_config(service_type):
         service_type (str): The type of service, either 'vlm' or 'llm'.
 
     Returns:
-        dict: A dictionary containing 'api_key', 'model_name', 'base_url', 'proxy', and optionally 'llm_provider'.
-               Returns None if the section is not found or key is missing.
+        dict: A dictionary containing model configuration details.
+              Returns None if the section is not found or a required key is missing.
     """
     if service_type not in ['vlm', 'llm']:
         raise ValueError("service_type must be either 'vlm' or 'llm'")
@@ -33,8 +33,10 @@ def get_model_config(service_type):
     base_url = config.get(service_type, 'base_url', fallback=None)
     proxy = config.get(service_type, 'proxy', fallback=None)
     llm_provider = None
+    google_api_key = None
     if service_type == 'llm':
         llm_provider = config.get('llm', 'llm_provider', fallback='gemini')
+        google_api_key = config.get('llm', 'google_api_key', fallback=None)
 
     # Treat an empty string for base_url or proxy as None
     if base_url is not None and not base_url.strip():
@@ -59,5 +61,7 @@ def get_model_config(service_type):
 
     if llm_provider:
         config_data['llm_provider'] = llm_provider
+    if google_api_key:
+        config_data['google_api_key'] = google_api_key
 
     return config_data
