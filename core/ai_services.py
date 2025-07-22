@@ -49,13 +49,21 @@ def get_question_from_image(image_bytes):
 - 如果问题文本包含“多选”等关键词，或明确提示可选多个答案，则为 "多选题"。
 - 如果`options`数组为空，则为 "主观题"。
 - 其他所有有选项的情况，默认为 "单选题"。
+
+对于选项提取的重要规则：
+1. 必须同时包含选项标识（如A、B、C、D）和选项内容
+2. 格式应为："A. 选项内容" 或 "A、选项内容" 或 "A：选项内容" 等
+3. 即使原题中选项标识和内容是分离的，也必须将它们合并为一个完整选项
+
+
 示例:
 ```json
 [
   {
     "question_text": "题目的主要文本",
     "code_block": "完整的代码内容",
-    "options": ["选项A", "选项B"]
+    "options": ["A. 第一个选项内容", "B. 第二个选项内容", "C. 第三个选项内容", "D. 第四个选项内容"],
+    "question_type": "单选题"
   }
 ]
 ````
@@ -111,10 +119,10 @@ def get_answer_from_text(question_text, force_search=False):
             model_name = llm_config.get('model_name', 'gemini-2.5-flash')
             # model = genai.GenerativeModel(model_name)
             cur_time = time.strftime("%Y-%m-%d_%H-%M-%S")
-            system_instruction = f"You are a helpful assistant. Provide a concise and accurate answer to the user's question. Use the search tool if you need to find the latest information. 现在时间是{cur_time}。请注意**始终使用中文回答**。注意题目来源于OCR结果，可能会有识别错误，请注意甄别."
+            system_instruction = f"You are a helpful assistant. 你是一个中文助手。无论用户提问使用什么语言，你都必须始终使用中文回答所有问题。对于选择题（单选或多选），请先分析问题，然后明确指出正确答案的选项（如'答案是B'或'答案是A和C'）。之后再提供详细解释。Provide a concise and accurate answer to the user's question. Use the search tool if you need to find the latest information. 现在时间是{cur_time}。请注意**无论题目是什么语言，都必须始终使用中文回答**。注意题目来源于OCR结果，可能会有识别错误，请注意甄别。即使题目全是英文，你也必须用中文回答。"
             if force_search:
                 system_instruction += " 必须使用搜索工具寻找答案"
-            content = question_text,
+            content = question_text
             response = genai_client.models.generate_content(
                 model=model_name,
                 contents=content,
@@ -150,7 +158,7 @@ def get_answer_from_text(question_text, force_search=False):
             http_client=http_client
         )
         try:
-            system_prompt = "You are a helpful assistant. Provide a concise and accurate answer to the user's question.使用中文回答。"
+            system_prompt = "You are a helpful assistant. 你是一个中文助手。无论用户提问使用什么语言，你都必须始终使用中文回答所有问题。对于选择题（单选或多选），请先分析问题，然后明确指出正确答案的选项（如'答案是B'或'答案是A和C'）。之后再提供详细解释。Provide a concise and accurate answer to the user's question. 即使题目全是英文，你也必须用中文回答。"
             if force_search:
                 logging.warning("OpenAI compatibility mode: force_search is not usable")
                 # system_prompt += " 必须使用搜索工具寻找答案"

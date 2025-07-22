@@ -1,14 +1,57 @@
 import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget,
-    QLineEdit, QTextEdit, QLabel, QHBoxLayout, QFrame, QCheckBox,QStyleFactory 
+    QLineEdit, QTextEdit, QLabel, QHBoxLayout, QFrame, QCheckBox, QStyleFactory,
+    QDialog, QComboBox, QFormLayout, QPushButton, QDialogButtonBox
 )
 from PySide6.QtCore import (Qt, QPoint, QPropertyAnimation, QEasingCurve, QSize,
                             QRunnable, Slot, Signal, QObject, QThreadPool)
 from PySide6.QtGui import QIcon, QClipboard
 
-from core.screenshot_handler import take_screenshot
+from core.screenshot_handler import take_screenshot, get_available_screens
+from utils.config_manager import get_app_config, save_app_config
 from core.ai_services import get_question_from_image, get_answer_from_text
+
+# --- Settings Dialog ---
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.setMinimumWidth(300)
+        
+        # Get current settings
+        self.app_config = get_app_config()
+        self.screens = get_available_screens()
+        
+        # Create form layout
+        layout = QFormLayout(self)
+        
+        # Screen selection
+        self.screen_combo = QComboBox()
+        current_screen = self.app_config.get('screen_number', 1)
+        
+        for screen in self.screens:
+            screen_text = f"Screen {screen['number']}: {screen['width']}x{screen['height']}"
+            self.screen_combo.addItem(screen_text, screen['number'])
+            
+            # Select current screen
+            if screen['number'] == current_screen:
+                self.screen_combo.setCurrentIndex(self.screen_combo.count() - 1)
+        
+        layout.addRow("Screenshot Screen:", self.screen_combo)
+        
+        # Buttons
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        layout.addRow(self.button_box)
+    
+    def get_settings(self):
+        """Returns the selected settings"""
+        screen_number = self.screen_combo.currentData()
+        return {
+            'screen_number': screen_number
+        }
 
 # --- Worker for Multithreading ---
 class WorkerSignals(QObject):
@@ -53,25 +96,37 @@ class Worker(QRunnable):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.is_pinned = True
-        self.is_expanded = False
+        self.is_pinned = True  # 默认置顶
+        self.is_expanded = True  # 默认展开模式
         self.compact_width = 80
         self.expanded_width = 480 # compact_width + result_view_width
         self.window_height = 400
         self.threadpool = QThreadPool()
+        self.threadpool.setMaxThreadCount(4)
         print(f"Multithreading with maximum {self.threadpool.maxThreadCount()} threads")
         self.setup_ui()
-        self.result_view_widget.hide() # Start in compact mode
+        # 不再隐藏结果视图，默认显示
+        
+        # 确保初始状态按钮样式正确
+        if self.is_pinned:
+            self.pin_button.setStyleSheet(self.base_button_style + "QPushButton { color: green; }")
+        else:
+            self.pin_button.setStyleSheet(self.base_button_style + "QPushButton { color: dimgray; }")
 
     def setup_ui(self):
         self.setWindowTitle("QuizGazer")
-        self.setWindowFlags(
-            Qt.FramelessWindowHint |
-            Qt.WindowStaysOnTopHint |
-            Qt.Tool
-        )
+        # 初始化时设置基本窗口标志 - 移除Tool标志，使用Window标志
+        # 根据初始置顶状态设置窗口标志
+        flags = Qt.FramelessWindowHint | Qt.Window
+        if self.is_pinned:
+            flags |= Qt.WindowStaysOnTopHint
+        
+        self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setGeometry(100, 100, self.compact_width, self.window_height)
+        # 设置窗口为DPI感知
+        if sys.platform == 'win32':
+            self.setAttribute(Qt.WA_NativeWindow)
+        self.setGeometry(100, 100, self.expanded_width, self.window_height)  # 默认使用展开宽度
 
         # Main widget and layout
         self.central_widget = QWidget()
@@ -133,6 +188,10 @@ class MainWindow(QMainWindow):
         self.pin_button.setFixedSize(30, 30)
         self.pin_button.setStyleSheet(self.base_button_style + "QPushButton { color: green; }")
         
+        self.settings_button = QPushButton("⚙️")
+        self.settings_button.setFixedSize(40, 40)
+        self.settings_button.setStyleSheet(self.base_button_style + "QPushButton { font-size: 20px; }")
+        
         self.exit_button = QPushButton("✕")
         self.exit_button.setFixedSize(30, 30)
         self.exit_button.setStyleSheet(self.exit_button_style)
@@ -145,6 +204,7 @@ class MainWindow(QMainWindow):
         icon_layout.addWidget(self.force_search_checkbox, alignment=Qt.AlignTop | Qt.AlignHCenter)
 
         icon_layout.addStretch()
+        icon_layout.addWidget(self.settings_button, alignment=Qt.AlignBottom | Qt.AlignHCenter)
         icon_layout.addWidget(self.exit_button, alignment=Qt.AlignBottom | Qt.AlignHCenter)
         
         # --- Right Result View ---
@@ -167,16 +227,14 @@ class MainWindow(QMainWindow):
         bottom_button_layout = QHBoxLayout()
         self.get_answer_button = QPushButton("Get New Answer")
         self.copy_answer_button = QPushButton("Copy Answer")
-        self.back_button = QPushButton("Back")
+        # 移除Back按钮，因为现在默认就是展开模式
         
         self.get_answer_button.setStyleSheet(self.base_button_style)
         self.copy_answer_button.setStyleSheet(self.base_button_style)
-        self.back_button.setStyleSheet(self.base_button_style)
 
         bottom_button_layout.addStretch()
         bottom_button_layout.addWidget(self.get_answer_button)
         bottom_button_layout.addWidget(self.copy_answer_button)
-        bottom_button_layout.addWidget(self.back_button)
 
         result_view_layout.addWidget(question_label)
         result_view_layout.addWidget(self.question_input)
@@ -191,25 +249,37 @@ class MainWindow(QMainWindow):
         # Connect signals
         self.capture_button.clicked.connect(self.on_capture_clicked)
         self.pin_button.clicked.connect(self.toggle_pin)
+        self.settings_button.clicked.connect(self.show_settings)
         self.exit_button.clicked.connect(QApplication.instance().quit)
         self.get_answer_button.clicked.connect(self.get_new_answer)
         self.copy_answer_button.clicked.connect(self.copy_answer)
-        self.back_button.clicked.connect(self.hide_result_view)
+        # 移除Back按钮的信号连接
+        
+        # 确保窗口在初始化时正确设置为置顶
+        # 这部分代码将在窗口显示后通过showEvent处理
 
         # Make window draggable
         self.old_pos = self.pos()
 
     def on_capture_clicked(self):
-        self.hide()
-        QApplication.processEvents() # Ensure window is hidden before screenshot
+        # 保存当前窗口位置
+        current_pos = self.pos()
+        
+        # 临时隐藏窗口进行截图
+        self.setWindowOpacity(0)  # 使用透明度而不是完全隐藏
+        QApplication.processEvents() # 确保窗口透明化生效
         
         screenshot_bytes = take_screenshot()
+        
+        # 恢复窗口
+        self.setWindowOpacity(1)
+        self.move(current_pos)  # 确保窗口位置不变
+        
         if not screenshot_bytes:
-            self.show()
             return
 
-        self.show()
-        self.show_result_view("Extracting question from image...")
+        self.question_input.setPlainText("Extracting question from image...")
+        self.answer_display.setText("Please wait...")
 
         # Run get_question_from_image in a worker thread
         worker = Worker(get_question_from_image, screenshot_bytes)
@@ -220,7 +290,7 @@ class MainWindow(QMainWindow):
     def on_question_ready(self, question_text):
         """Handles the result from get_question_from_image."""
         self.question_input.setPlainText(question_text)
-        self.get_initial_answer()
+        self.get_initial_answer()  # 自动获取答案
 
     def on_answer_ready(self, answer_text):
         """Handles the result from get_answer_from_text."""
@@ -232,34 +302,32 @@ class MainWindow(QMainWindow):
         self.answer_display.setText(f"An error occurred: {error_tuple}")
 
     def show_result_view(self, initial_question_text=""):
+        # 如果已经是展开状态，只更新文本
         if self.is_expanded:
-            self.question_input.setPlainText(initial_question_text)
-            self.answer_display.setText("Getting answer...")
+            if initial_question_text:
+                self.question_input.setPlainText(initial_question_text)
+                self.answer_display.setText("Getting answer...")
             return
             
+        # 否则展开UI
         self.is_expanded = True
         self.result_view_widget.show()
-        self.question_input.setPlainText(initial_question_text)
-        self.answer_display.setText("Getting answer...")
+        if initial_question_text:
+            self.question_input.setPlainText(initial_question_text)
+            self.answer_display.setText("Getting answer...")
         self.animate_size(QSize(self.expanded_width, self.window_height))
-        
-        self.get_initial_answer()
 
     def hide_result_view(self, animated=True):
-        if not self.is_expanded and not animated:
-             self.resize(self.compact_width, self.window_height)
-             self.result_view_widget.hide()
-             return
-
+        # 在新的设计中，我们不再隐藏结果视图，而是切换到紧凑模式
         if not self.is_expanded:
             return
-
+            
         self.is_expanded = False
-        self.result_view_widget.hide()
         if animated:
             self.animate_size(QSize(self.compact_width, self.window_height))
         else:
             self.resize(self.compact_width, self.window_height)
+        self.result_view_widget.hide()
 
     def get_initial_answer(self):
         question = self.question_input.toPlainText()
@@ -298,32 +366,190 @@ class MainWindow(QMainWindow):
         self.animation.setEasingCurve(QEasingCurve.InOutQuart)
         self.animation.start()
 
+    def set_window_pin_state(self, pin_state):
+        """设置窗口的置顶状态（主要用于初始化）"""
+        # 保存当前状态
+        old_state = self.is_pinned
+        
+        # 设置新状态
+        self.is_pinned = pin_state
+        
+        # 如果状态不同，调用toggle_pin来设置
+        if old_state != pin_state:
+            # 恢复状态，因为toggle_pin会反转它
+            self.is_pinned = not pin_state
+            self.toggle_pin()
+        else:
+            # 状态相同，只更新按钮样式
+            if pin_state:
+                self.pin_button.setStyleSheet(self.base_button_style + "QPushButton { color: green; }")
+            else:
+                self.pin_button.setStyleSheet(self.base_button_style + "QPushButton { color: dimgray; }")
+    
     def toggle_pin(self):
+        """切换窗口置顶状态"""
         self.is_pinned = not self.is_pinned
+        
+        # 更新按钮样式
         if self.is_pinned:
-            self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
             self.pin_button.setStyleSheet(self.base_button_style + "QPushButton { color: green; }")
         else:
-            self.setWindowFlag(Qt.WindowStaysOnTopHint, False)
             self.pin_button.setStyleSheet(self.base_button_style + "QPushButton { color: dimgray; }")
+        
+        # 在Windows上使用更可靠的方法
+        if sys.platform == 'win32':
+            import ctypes
+            from ctypes import wintypes
+            
+            try:
+                hwnd = int(self.winId())
+                
+                # 保存当前位置和大小
+                current_pos = self.pos()
+                current_size = self.size()
+                
+                if self.is_pinned:
+                    # 设置为置顶窗口
+                    print("Setting window to topmost...")
+                    
+                    # 使用Qt方法设置窗口标志
+                    flags = self.windowFlags()
+                    flags |= Qt.WindowStaysOnTopHint
+                    self.setWindowFlags(flags)
+                    self.show()
+                    
+                    # 使用Windows API强制置顶
+                    result = ctypes.windll.user32.SetWindowPos(
+                        hwnd, -1,  # HWND_TOPMOST
+                        0, 0, 0, 0,
+                        0x0001 | 0x0002 | 0x0040  # SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW
+                    )
+                    print(f"Set topmost result: {result}")
+                    
+                else:
+                    # 取消置顶
+                    print("Setting window to normal z-order...")
+                    
+                    # 使用Qt方法移除窗口标志
+                    flags = self.windowFlags()
+                    flags &= ~Qt.WindowStaysOnTopHint
+                    self.setWindowFlags(flags)
+                    self.show()
+                    
+                    # 使用Windows API确保取消置顶
+                    result = ctypes.windll.user32.SetWindowPos(
+                        hwnd, -2,  # HWND_NOTOPMOST
+                        0, 0, 0, 0,
+                        0x0001 | 0x0002 | 0x0040  # SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW
+                    )
+                    print(f"Remove topmost result: {result}")
+                
+                # 恢复窗口位置和大小
+                self.resize(current_size)
+                self.move(current_pos)
+                    
+            except Exception as e:
+                print(f"Windows API error: {e}")
+                # 如果API失败，回退到Qt方法
+                self._toggle_pin_qt()
+        else:
+            # 非Windows系统使用Qt方法
+            self._toggle_pin_qt()
+            
+    def _toggle_pin_qt(self):
+        """使用Qt方法切换窗口置顶状态（备用方法）"""
+        # 保存当前位置和大小
+        current_pos = self.pos()
+        current_size = self.size()
+            
+        # 使用Qt标准方法
+        flags = self.windowFlags()
+        if self.is_pinned:
+            flags |= Qt.WindowStaysOnTopHint
+            print("Qt: Window set to stay on top")
+        else:
+            flags &= ~Qt.WindowStaysOnTopHint
+            print("Qt: Window set to normal z-order")
+        
+        # 应用新标志并恢复位置和大小
+        self.setWindowFlags(flags)
         self.show()
+        self.resize(current_size)
+        self.move(current_pos)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            # Check if the press is on the icon bar to allow dragging
-            if self.icon_bar_widget.geometry().contains(event.pos()):
-                 self.old_pos = event.globalPosition().toPoint()
-                 event.accept()
-            else:
-                event.ignore()
+            # Allow dragging from anywhere on the window
+            # Store the cursor position relative to the window
+            self.drag_position = event.position().toPoint()
+            event.accept()
 
 
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.LeftButton and self.old_pos:
-            delta = QPoint(event.globalPosition().toPoint() - self.old_pos)
-            self.move(self.x() + delta.x(), self.y() + delta.y())
-            self.old_pos = event.globalPosition().toPoint()
+        if event.buttons() == Qt.LeftButton and hasattr(self, 'drag_position'):
+            # Move window to new position
+            global_pos = event.globalPosition().toPoint()
+            self.move(global_pos - self.drag_position)
             event.accept()
+            
+    def showEvent(self, event):
+        """窗口显示事件，用于确保窗口在显示后正确设置置顶状态"""
+        super().showEvent(event)
+        
+        # 窗口显示后，使用定时器延迟设置置顶状态，确保窗口完全初始化
+        if sys.platform == 'win32' and self.is_pinned:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(100, self._ensure_topmost)  # 延迟100ms执行
+            
+    def _ensure_topmost(self):
+        """确保窗口置顶的辅助方法"""
+        if not self.is_pinned:
+            return
+            
+        import ctypes
+        try:
+            hwnd = int(self.winId())
+            
+            # 多步骤确保窗口置顶
+            print("Ensuring window is topmost...")
+            
+            # 1. 设置为TOPMOST
+            result1 = ctypes.windll.user32.SetWindowPos(
+                hwnd, -1,  # HWND_TOPMOST
+                0, 0, 0, 0,
+                0x0001 | 0x0002 | 0x0040  # SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW
+            )
+            
+            # 2. 激活窗口
+            ctypes.windll.user32.SetActiveWindow(hwnd)
+            
+            # 3. 设置为前台窗口
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+            
+            # 4. 再次确认TOPMOST
+            result2 = ctypes.windll.user32.SetWindowPos(
+                hwnd, -1,  # HWND_TOPMOST
+                0, 0, 0, 0,
+                0x0001 | 0x0002 | 0x0010  # SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+            )
+            
+            print(f"Ensure topmost results: {result1}, {result2}")
+            
+            # 验证窗口状态
+            ex_style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
+            is_topmost = (ex_style & 0x00000008) != 0  # WS_EX_TOPMOST
+            print(f"Window topmost status: {is_topmost}")
+            
+        except Exception as e:
+            print(f"Ensure topmost error: {e}")
+            
+    def show_settings(self):
+        """Shows the settings dialog"""
+        dialog = SettingsDialog(self)
+        if dialog.exec():
+            # Save settings if dialog was accepted
+            settings = dialog.get_settings()
+            save_app_config(settings)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

@@ -3,18 +3,50 @@ import mss.tools
 import os,time
 from PIL import Image
 import io
+from utils.config_manager import get_app_config
+
+def get_available_screens():
+    """
+    Gets information about all available screens.
+    
+    Returns:
+        list: A list of dictionaries with screen information.
+    """
+    with mss.mss() as sct:
+        screens = []
+        for i, monitor in enumerate(sct.monitors):
+            # Skip the "all monitors" entry which is at index 0
+            if i == 0:
+                continue
+                
+            screens.append({
+                'number': i,
+                'width': monitor['width'],
+                'height': monitor['height'],
+                'left': monitor['left'],
+                'top': monitor['top']
+            })
+        return screens
 
 def take_screenshot():
     """
-    Takes a screenshot of the primary monitor and resizes it if it's too large.
+    Takes a screenshot of the selected monitor and resizes it if it's too large.
 
     Returns:
         bytes: The screenshot image data in PNG format as bytes.
     """
+    # Get screen number from config
+    app_config = get_app_config()
+    screen_number = app_config.get('screen_number', 1)
+    
     with mss.mss() as sct:
-        # Get information of monitor 1
-        monitor_number = 1
-        mon = sct.monitors[monitor_number]
+        # Ensure screen number is valid
+        if screen_number < 1 or screen_number >= len(sct.monitors):
+            print(f"Invalid screen number {screen_number}, defaulting to 1")
+            screen_number = 1
+            
+        # Get information of the selected monitor
+        mon = sct.monitors[screen_number]
 
         # Grab the data
         sct_img = sct.grab(mon)

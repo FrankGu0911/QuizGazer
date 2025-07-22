@@ -1,6 +1,56 @@
 import configparser
 import os
 
+def get_app_config():
+    """
+    Reads the application configuration from the config.ini file.
+    
+    Returns:
+        dict: A dictionary containing application configuration details.
+    """
+    config = configparser.ConfigParser()
+    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
+    
+    if not os.path.exists(config_path):
+        print(f"Error: config.ini not found at {config_path}")
+        return {}
+        
+    config.read(config_path)
+    
+    # Get app settings with defaults
+    if 'app' not in config:
+        config.add_section('app')
+    
+    screen_number = config.getint('app', 'screen_number', fallback=1)
+    
+    return {
+        'screen_number': screen_number
+    }
+
+def save_app_config(config_data):
+    """
+    Saves application configuration to the config.ini file.
+    
+    Args:
+        config_data (dict): A dictionary containing application configuration details.
+    """
+    config = configparser.ConfigParser()
+    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
+    
+    if os.path.exists(config_path):
+        config.read(config_path)
+    
+    if 'app' not in config:
+        config.add_section('app')
+    
+    # Update app settings
+    if 'screen_number' in config_data:
+        config.set('app', 'screen_number', str(config_data['screen_number']))
+    
+    # Write to file
+    with open(config_path, 'w') as configfile:
+        config.write(configfile)
+
 def get_model_config(service_type):
     """
     Reads the model configuration from the config.ini file for a specific service.
