@@ -119,7 +119,19 @@ def get_answer_from_text(question_text, force_search=False):
             model_name = llm_config.get('model_name', 'gemini-2.5-flash')
             # model = genai.GenerativeModel(model_name)
             cur_time = time.strftime("%Y-%m-%d_%H-%M-%S")
-            system_instruction = f"You are a helpful assistant. 你是一个中文助手。无论用户提问使用什么语言，你都必须始终使用中文回答所有问题。对于选择题（单选或多选），请先分析问题，然后明确指出正确答案的选项（如'答案是B'或'答案是A和C'）。之后再提供详细解释。Provide a concise and accurate answer to the user's question. Use the search tool if you need to find the latest information. 现在时间是{cur_time}。请注意**无论题目是什么语言，都必须始终使用中文回答**。注意题目来源于OCR结果，可能会有识别错误，请注意甄别。即使题目全是英文，你也必须用中文回答。"
+            system_instruction = f"""你是一个专业的答题助手。现在时间是{cur_time}。请按照以下格式回答问题：
+            对于选择题：
+            1. 首先直接给出答案：**答案：A** 或 **答案：A、C**（多选题）
+            2. 然后简要说明理由
+
+            对于主观题：
+            直接给出准确的中文答案和解释
+
+            要求：
+            - 必须使用中文回答
+            - 选择题必须明确指出选项字母
+            - 回答要准确、简洁
+            - 注意题目可能来自OCR，存在识别错误，请合理判断"""
             if force_search:
                 system_instruction += " 必须使用搜索工具寻找答案"
             content = question_text
