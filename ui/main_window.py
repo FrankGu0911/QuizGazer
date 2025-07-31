@@ -10,7 +10,7 @@ from PySide6.QtGui import QIcon, QClipboard
 
 from core.screenshot_handler import take_screenshot, get_available_screens
 from utils.config_manager import get_app_config, save_app_config
-from core.ai_services import get_question_from_image, get_answer_from_text
+from core.ai_services import get_question_from_image, get_answer_from_text, get_direct_answer_from_image
 
 # --- Settings Dialog ---
 class SettingsDialog(QDialog):
@@ -150,7 +150,7 @@ class MainWindow(QMainWindow):
         # --- Common Styles ---
         self.base_button_style = """
             QPushButton {
-                font-size: 16px;
+                font-size: 12px;
                 background-color: #EAEAEA; /* Light gray background */
                 border: 1px solid #D0D0D0; /* Light border */
                 border-radius: 8px;
@@ -201,7 +201,13 @@ class MainWindow(QMainWindow):
         
         self.force_search_checkbox = QCheckBox("🌐")
         self.force_search_checkbox.setStyleSheet("QCheckBox { color: #333; } QCheckBox::indicator { width: 15px; height: 15px; }")
+        self.force_search_checkbox.setToolTip("强制使用搜索工具")
         icon_layout.addWidget(self.force_search_checkbox, alignment=Qt.AlignTop | Qt.AlignHCenter)
+
+        self.direct_mode_checkbox = QCheckBox("👁️")
+        self.direct_mode_checkbox.setStyleSheet("QCheckBox { color: #333; } QCheckBox::indicator { width: 15px; height: 15px; }")
+        self.direct_mode_checkbox.setToolTip("直接模式：适用于包含图形、图表的题目")
+        icon_layout.addWidget(self.direct_mode_checkbox, alignment=Qt.AlignTop | Qt.AlignHCenter)
 
         icon_layout.addStretch()
         icon_layout.addWidget(self.settings_button, alignment=Qt.AlignBottom | Qt.AlignHCenter)
@@ -278,19 +284,55 @@ class MainWindow(QMainWindow):
         if not screenshot_bytes:
             return
 
-        self.question_input.setPlainText("Extracting question from image...")
-        self.answer_display.setText("Please wait...")
+        # 检查是否使用直接模式
+        if self.direct_mode_checkbox.isChecked():
+            # 直接模式：一步到位获取答案
+            self.question_input.setPlainText("正在直接分析图片并获取答案...")
+            self.answer_display.setText("Please wait...")
 
-        # Run get_question_from_image in a worker thread
-        worker = Worker(get_question_from_image, screenshot_bytes)
-        worker.signals.result.connect(self.on_question_ready)
-        worker.signals.error.connect(self.on_ai_error)
-        self.threadpool.start(worker)
+            force_search = self.force_search_checkbox.isChecked()
+            worker = Worker(get_direct_answer_from_image, screenshot_bytes, force_search=force_search)
+            worker.signals.result.connect(self.on_direct_answer_ready)
+            worker.signals.error.connect(self.on_ai_error)
+            self.threadpool.start(worker)
+        else:
+            # 传统模式：先提取问题，再获取答案
+            self.question_input.setPlainText("Extracting question from image...")
+            self.answer_display.setText("Please wait...")
+
+            worker = Worker(get_question_from_image, screenshot_bytes)
+            worker.signals.result.connect(self.on_question_ready)
+            worker.signals.error.connect(self.on_ai_error)
+            self.threadpool.start(worker)
 
     def on_question_ready(self, question_text):
         """Handles the result from get_question_from_image."""
         self.question_input.setPlainText(question_text)
+
+        # 检查VLM是否成功识别到问题
+        # 如果返回空列表或错误信息，不自动请求LLM
+        if self._should_skip_llm_request(question_text):
+            self.answer_display.setText("未识别到问题，请检查图片内容或手动输入问题。")
+            return
+
         self.get_initial_answer()  # 自动获取答案
+
+    def _should_skip_llm_request(self, question_text):
+        """判断是否应该跳过LLM请求"""
+        if not question_text or not question_text.strip():
+            return True
+
+        # 检查是否为空JSON数组
+        stripped_text = question_text.strip()
+        if stripped_text == "[]":
+            return True
+
+        return False
+
+    def on_direct_answer_ready(self, answer_text):
+        """处理直接模式的答案结果"""
+        self.question_input.setPlainText("直接模式：已分析图片内容")
+        self.answer_display.setText(answer_text)
 
     def on_answer_ready(self, answer_text):
         """Handles the result from get_answer_from_text."""
