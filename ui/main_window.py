@@ -2,7 +2,7 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget,
     QLineEdit, QTextEdit, QLabel, QHBoxLayout, QFrame, QCheckBox, QStyleFactory,
-    QDialog, QComboBox, QFormLayout, QPushButton, QDialogButtonBox
+    QDialog, QComboBox, QFormLayout, QPushButton, QDialogButtonBox, QTabWidget
 )
 from PySide6.QtCore import (Qt, QPoint, QPropertyAnimation, QEasingCurve, QSize,
                             QRunnable, Slot, Signal, QObject, QThreadPool)
@@ -11,6 +11,15 @@ from PySide6.QtGui import QIcon, QClipboard
 from core.screenshot_handler import take_screenshot, get_available_screens
 from utils.config_manager import get_app_config, save_app_config
 from core.ai_services import get_question_from_image, get_answer_from_text, get_direct_answer_from_image
+# Try to import full knowledge base components, fallback to simplified versions
+try:
+    from ui.knowledge_base_panel import KnowledgeBasePanel
+    from ui.knowledge_base_settings import KnowledgeBaseSettingsDialog
+    print("Using full knowledge base components")
+except ImportError as e:
+    print(f"Using simplified knowledge base components: {e}")
+    from ui.knowledge_base_panel_simple import KnowledgeBasePanel
+    from ui.knowledge_base_settings_simple import KnowledgeBaseSettingsDialog
 
 # --- Settings Dialog ---
 class SettingsDialog(QDialog):
@@ -107,11 +116,261 @@ class MainWindow(QMainWindow):
         self.setup_ui()
         # 不再隐藏结果视图，默认显示
         
-        # 确保初始状态按钮样式正确
-        if self.is_pinned:
-            self.pin_button.setStyleSheet(self.base_button_style + "QPushButton { color: green; }")
+        # Set up theme monitoring
+        self.setup_theme_monitoring()
+        
+        # Ensure initial button styles are correct (after theme is applied)
+        self.update_pin_button_style()
+    
+    def detect_dark_mode(self):
+        """Detect if the system is using dark mode."""
+        try:
+            if sys.platform == 'win32':
+                import winreg
+                try:
+                    registry = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+                    key = winreg.OpenKey(registry, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+                    value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+                    winreg.CloseKey(key)
+                    return value == 0  # 0 means dark mode, 1 means light mode
+                except:
+                    pass
+            
+            # Fallback: check Qt palette
+            palette = QApplication.palette()
+            window_color = palette.color(palette.Window)
+            return window_color.lightness() < 128
+        except:
+            return False  # Default to light mode if detection fails
+    
+    def apply_theme_styles(self):
+        """Apply theme-aware styles based on dark/light mode."""
+        if self.is_dark_mode:
+            self.apply_dark_theme()
         else:
-            self.pin_button.setStyleSheet(self.base_button_style + "QPushButton { color: dimgray; }")
+            self.apply_light_theme()
+    
+    def apply_dark_theme(self):
+        """Apply dark theme styles."""
+        # Dark theme colors
+        bg_color = "rgba(45, 45, 45, 0.95)"
+        border_color = "rgba(80, 80, 80, 0.8)"
+        button_bg = "#404040"
+        button_border = "#606060"
+        button_hover = "#505050"
+        button_pressed = "#353535"
+        text_color = "#E0E0E0"
+        input_bg = "#2D2D2D"
+        input_border = "#555555"
+        
+        # Main window background
+        self.central_widget.setStyleSheet(f"""
+            QWidget#central_widget {{
+                background-color: {bg_color};
+                border-radius: 10px;
+                border: 1px solid {border_color};
+            }}
+        """)
+        
+        # Button styles
+        self.base_button_style = f"""
+            QPushButton {{
+                font-size: 12px;
+                background-color: {button_bg};
+                border: 1px solid {button_border};
+                border-radius: 8px;
+                color: {text_color};
+                padding: 5px;
+                margin: 5px;
+            }}
+            QPushButton:hover {{
+                background-color: {button_hover};
+            }}
+            QPushButton:pressed {{
+                background-color: {button_pressed};
+            }}
+        """
+        
+        # Icon bar style
+        self.icon_bar_style = f"background-color: rgba(30, 30, 30, 0.8); border-radius: 0px;"
+        
+        # Input/text styles
+        self.input_style = f"""
+            border: 1px solid {input_border};
+            padding: 5px;
+            background-color: {input_bg};
+            color: {text_color};
+            border-radius: 5px;
+        """
+        
+        self.readonly_input_style = f"""
+            background-color: #3A3A3A;
+            border: 1px solid {input_border};
+            padding: 5px;
+            color: {text_color};
+            border-radius: 5px;
+        """
+        
+        # Label style
+        self.label_style = f"color: {text_color};"
+        
+        # Update button styles that depend on base_button_style
+        self.capture_button_style = self.base_button_style.replace("12px", "16px")
+        self.exit_button_style = self.base_button_style + """
+            QPushButton:hover {
+                background-color: rgba(255, 0, 0, 0.6);
+                color: white;
+            }
+        """
+    
+    def apply_light_theme(self):
+        """Apply light theme styles."""
+        # Light theme colors (original)
+        bg_color = "rgba(240, 240, 240, 0.9)"
+        border_color = "rgba(0, 0, 0, 0.1)"
+        button_bg = "#EAEAEA"
+        button_border = "#D0D0D0"
+        button_hover = "#DCDCDC"
+        button_pressed = "#C8C8C8"
+        text_color = "#333"
+        input_bg = "white"
+        input_border = "#cccccc"
+        
+        # Main window background
+        self.central_widget.setStyleSheet(f"""
+            QWidget#central_widget {{
+                background-color: {bg_color};
+                border-radius: 10px;
+                border: 1px solid {border_color};
+            }}
+        """)
+        
+        # Button styles
+        self.base_button_style = f"""
+            QPushButton {{
+                font-size: 12px;
+                background-color: {button_bg};
+                border: 1px solid {button_border};
+                border-radius: 8px;
+                color: {text_color};
+                padding: 5px;
+                margin: 5px;
+            }}
+            QPushButton:hover {{
+                background-color: {button_hover};
+            }}
+            QPushButton:pressed {{
+                background-color: {button_pressed};
+            }}
+        """
+        
+        # Icon bar style
+        self.icon_bar_style = "background-color: rgba(0, 0, 0, 0.05); border-radius: 0px;"
+        
+        # Input/text styles
+        self.input_style = f"""
+            border: 1px solid {input_border};
+            padding: 5px;
+            background-color: {input_bg};
+            color: {text_color};
+            border-radius: 5px;
+        """
+        
+        self.readonly_input_style = f"""
+            background-color: #f9f9f9;
+            border: 1px solid {input_border};
+            padding: 5px;
+            color: {text_color};
+            border-radius: 5px;
+        """
+        
+        # Label style
+        self.label_style = f"color: {text_color};"
+        
+        # Update button styles that depend on base_button_style
+        self.capture_button_style = self.base_button_style.replace("12px", "16px")
+        self.exit_button_style = self.base_button_style + """
+            QPushButton:hover {
+                background-color: rgba(255, 0, 0, 0.6);
+                color: white;
+            }
+        """
+    
+    def update_all_styles(self):
+        """Update all component styles after theme change."""
+        if hasattr(self, 'central_widget'):
+            # Update main window
+            self.apply_theme_styles()
+            
+            # Update icon bar
+            if hasattr(self, 'icon_bar_widget'):
+                self.icon_bar_widget.setStyleSheet(self.icon_bar_style)
+            
+            # Update buttons
+            button_components = [
+                'capture_button', 'pin_button', 'knowledge_base_button', 
+                'settings_button', 'exit_button', 'get_answer_button', 'copy_answer_button'
+            ]
+            
+            for button_name in button_components:
+                if hasattr(self, button_name):
+                    button = getattr(self, button_name)
+                    if button_name == 'capture_button':
+                        button.setStyleSheet(self.capture_button_style)
+                    elif button_name == 'exit_button':
+                        button.setStyleSheet(self.exit_button_style)
+                    elif button_name == 'pin_button':
+                        if self.is_pinned:
+                            button.setStyleSheet(self.base_button_style + "QPushButton { color: green; }")
+                        else:
+                            button.setStyleSheet(self.base_button_style + "QPushButton { color: dimgray; }")
+                    elif button_name in ['knowledge_base_button', 'settings_button']:
+                        button.setStyleSheet(self.base_button_style + "QPushButton { font-size: 20px; }")
+                    else:
+                        button.setStyleSheet(self.base_button_style)
+            
+            # Update text inputs
+            if hasattr(self, 'question_input'):
+                self.question_input.setStyleSheet(self.input_style)
+            if hasattr(self, 'answer_display'):
+                self.answer_display.setStyleSheet(self.readonly_input_style)
+            
+            # Update labels
+            label_components = ['question_label', 'answer_label']
+            for label_name in label_components:
+                if hasattr(self, label_name):
+                    getattr(self, label_name).setStyleSheet(self.label_style)
+            
+            # Update checkboxes
+            checkbox_style = f"QCheckBox {{ {self.label_style} }} QCheckBox::indicator {{ width: 15px; height: 15px; }}"
+            if hasattr(self, 'force_search_checkbox'):
+                self.force_search_checkbox.setStyleSheet(checkbox_style)
+            if hasattr(self, 'direct_mode_checkbox'):
+                self.direct_mode_checkbox.setStyleSheet(checkbox_style)
+    
+    def setup_theme_monitoring(self):
+        """Set up monitoring for theme changes."""
+        from PySide6.QtCore import QTimer
+        
+        self.theme_check_timer = QTimer()
+        self.theme_check_timer.timeout.connect(self.check_theme_change)
+        self.theme_check_timer.start(2000)  # Check every 2 seconds
+    
+    def check_theme_change(self):
+        """Check if the system theme has changed."""
+        current_dark_mode = self.detect_dark_mode()
+        if current_dark_mode != self.is_dark_mode:
+            print(f"Theme changed: {'Dark' if current_dark_mode else 'Light'} mode detected")
+            self.is_dark_mode = current_dark_mode
+            self.update_all_styles()
+    
+    def update_pin_button_style(self):
+        """Update pin button style based on current state."""
+        if hasattr(self, 'pin_button'):
+            if self.is_pinned:
+                self.pin_button.setStyleSheet(self.base_button_style + "QPushButton { color: green; }")
+            else:
+                self.pin_button.setStyleSheet(self.base_button_style + "QPushButton { color: dimgray; }")
 
     def setup_ui(self):
         self.setWindowTitle("QuizGazer")
@@ -128,6 +387,9 @@ class MainWindow(QMainWindow):
             self.setAttribute(Qt.WA_NativeWindow)
         self.setGeometry(100, 100, self.expanded_width, self.window_height)  # 默认使用展开宽度
 
+        # Detect dark mode
+        self.is_dark_mode = self.detect_dark_mode()
+        
         # Main widget and layout
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -136,47 +398,18 @@ class MainWindow(QMainWindow):
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
         
-        # Style for the window background
-        self.central_widget.setStyleSheet("""
-            QWidget#central_widget {
-                background-color: rgba(240, 240, 240, 0.9);
-                border-radius: 10px;
-                border: 1px solid rgba(0, 0, 0, 0.1);
-            }
-        """)
+        # Apply theme-aware styles
+        self.apply_theme_styles()
         self.central_widget.setObjectName("central_widget")
 
 
-        # --- Common Styles ---
-        self.base_button_style = """
-            QPushButton {
-                font-size: 12px;
-                background-color: #EAEAEA; /* Light gray background */
-                border: 1px solid #D0D0D0; /* Light border */
-                border-radius: 8px;
-                color: #333; /* Dark text */
-                padding: 5px;
-                margin: 5px;
-            }
-            QPushButton:hover {
-                background-color: #DCDCDC; /* Slightly darker on hover */
-            }
-            QPushButton:pressed {
-                background-color: #C8C8C8; /* Darker when pressed */
-            }
-        """
-        self.capture_button_style = self.base_button_style.replace("15px", "25px").replace("16px", "24px")
-        self.exit_button_style = self.base_button_style + """
-            QPushButton:hover {
-                background-color: rgba(255, 0, 0, 0.6);
-                color: white;
-            }
-        """
+        # --- Common Styles (now set by theme) ---
+        # Button styles are now defined in theme methods
 
         # --- Left Icon Bar ---
         self.icon_bar_widget = QWidget()
         self.icon_bar_widget.setFixedWidth(self.compact_width)
-        self.icon_bar_widget.setStyleSheet("background-color: rgba(0, 0, 0, 0.05); border-radius: 0px;")
+        self.icon_bar_widget.setStyleSheet(self.icon_bar_style)
         icon_layout = QVBoxLayout(self.icon_bar_widget)
         icon_layout.setContentsMargins(10,10,10,10)
         
@@ -187,6 +420,11 @@ class MainWindow(QMainWindow):
         self.pin_button = QPushButton("📌")
         self.pin_button.setFixedSize(30, 30)
         self.pin_button.setStyleSheet(self.base_button_style + "QPushButton { color: green; }")
+        
+        self.knowledge_base_button = QPushButton("📚")
+        self.knowledge_base_button.setFixedSize(40, 40)
+        self.knowledge_base_button.setStyleSheet(self.base_button_style + "QPushButton { font-size: 20px; }")
+        self.knowledge_base_button.setToolTip("知识库")
         
         self.settings_button = QPushButton("⚙️")
         self.settings_button.setFixedSize(40, 40)
@@ -200,40 +438,48 @@ class MainWindow(QMainWindow):
         icon_layout.addWidget(self.pin_button, alignment=Qt.AlignTop | Qt.AlignHCenter)
         
         self.force_search_checkbox = QCheckBox("🌐")
-        self.force_search_checkbox.setStyleSheet("QCheckBox { color: #333; } QCheckBox::indicator { width: 15px; height: 15px; }")
+        checkbox_style = f"QCheckBox {{ {self.label_style} }} QCheckBox::indicator {{ width: 15px; height: 15px; }}"
+        self.force_search_checkbox.setStyleSheet(checkbox_style)
         self.force_search_checkbox.setToolTip("强制使用搜索工具")
         icon_layout.addWidget(self.force_search_checkbox, alignment=Qt.AlignTop | Qt.AlignHCenter)
 
         self.direct_mode_checkbox = QCheckBox("👁️")
-        self.direct_mode_checkbox.setStyleSheet("QCheckBox { color: #333; } QCheckBox::indicator { width: 15px; height: 15px; }")
+        self.direct_mode_checkbox.setStyleSheet(checkbox_style)
         self.direct_mode_checkbox.setToolTip("直接模式：适用于包含图形、图表的题目")
         icon_layout.addWidget(self.direct_mode_checkbox, alignment=Qt.AlignTop | Qt.AlignHCenter)
 
         icon_layout.addStretch()
+        icon_layout.addWidget(self.knowledge_base_button, alignment=Qt.AlignBottom | Qt.AlignHCenter)
         icon_layout.addWidget(self.settings_button, alignment=Qt.AlignBottom | Qt.AlignHCenter)
         icon_layout.addWidget(self.exit_button, alignment=Qt.AlignBottom | Qt.AlignHCenter)
         
-        # --- Right Result View ---
+        # --- Right Result View with Tabs ---
         self.result_view_widget = QWidget()
         result_view_layout = QVBoxLayout(self.result_view_widget)
         result_view_layout.setContentsMargins(10,10,10,10)
 
-        question_label = QLabel("Question (editable):")
-        question_label.setStyleSheet("color: #333;")
-        self.question_input = QTextEdit()
-        self.question_input.setStyleSheet("border: 1px solid #cccccc; padding: 5px; background-color: white; color: #333; border-radius: 5px;")
+        # Create tab widget
+        self.tab_widget = QTabWidget()
         
-        answer_label = QLabel("Answer:")
-        answer_label.setStyleSheet("color: #333;")
+        # Main tab (original functionality)
+        self.main_tab = QWidget()
+        main_tab_layout = QVBoxLayout(self.main_tab)
+        
+        self.question_label = QLabel("Question (editable):")
+        self.question_label.setStyleSheet(self.label_style)
+        self.question_input = QTextEdit()
+        self.question_input.setStyleSheet(self.input_style)
+        
+        self.answer_label = QLabel("Answer:")
+        self.answer_label.setStyleSheet(self.label_style)
         self.answer_display = QTextEdit()
         self.answer_display.setReadOnly(True)
-        self.answer_display.setStyleSheet("background-color: #f9f9f9; border: 1px solid #cccccc; padding: 5px; color: #333; border-radius: 5px;")
+        self.answer_display.setStyleSheet(self.readonly_input_style)
         
-        # Bottom button layout for result view
+        # Bottom button layout for main tab
         bottom_button_layout = QHBoxLayout()
         self.get_answer_button = QPushButton("Get New Answer")
         self.copy_answer_button = QPushButton("Copy Answer")
-        # 移除Back按钮，因为现在默认就是展开模式
         
         self.get_answer_button.setStyleSheet(self.base_button_style)
         self.copy_answer_button.setStyleSheet(self.base_button_style)
@@ -242,11 +488,20 @@ class MainWindow(QMainWindow):
         bottom_button_layout.addWidget(self.get_answer_button)
         bottom_button_layout.addWidget(self.copy_answer_button)
 
-        result_view_layout.addWidget(question_label)
-        result_view_layout.addWidget(self.question_input)
-        result_view_layout.addWidget(answer_label)
-        result_view_layout.addWidget(self.answer_display)
-        result_view_layout.addLayout(bottom_button_layout)
+        main_tab_layout.addWidget(self.question_label)
+        main_tab_layout.addWidget(self.question_input)
+        main_tab_layout.addWidget(self.answer_label)
+        main_tab_layout.addWidget(self.answer_display)
+        main_tab_layout.addLayout(bottom_button_layout)
+        
+        # Knowledge base tab
+        self.knowledge_base_tab = KnowledgeBasePanel()
+        
+        # Add tabs to tab widget
+        self.tab_widget.addTab(self.main_tab, "问答")
+        self.tab_widget.addTab(self.knowledge_base_tab, "知识库")
+        
+        result_view_layout.addWidget(self.tab_widget)
 
         # Add widgets to main layout
         self.main_layout.addWidget(self.icon_bar_widget)
@@ -255,11 +510,11 @@ class MainWindow(QMainWindow):
         # Connect signals
         self.capture_button.clicked.connect(self.on_capture_clicked)
         self.pin_button.clicked.connect(self.toggle_pin)
+        self.knowledge_base_button.clicked.connect(self.show_knowledge_base)
         self.settings_button.clicked.connect(self.show_settings)
         self.exit_button.clicked.connect(QApplication.instance().quit)
         self.get_answer_button.clicked.connect(self.get_new_answer)
         self.copy_answer_button.clicked.connect(self.copy_answer)
-        # 移除Back按钮的信号连接
         
         # 确保窗口在初始化时正确设置为置顶
         # 这部分代码将在窗口显示后通过showEvent处理
@@ -433,10 +688,7 @@ class MainWindow(QMainWindow):
         self.is_pinned = not self.is_pinned
         
         # 更新按钮样式
-        if self.is_pinned:
-            self.pin_button.setStyleSheet(self.base_button_style + "QPushButton { color: green; }")
-        else:
-            self.pin_button.setStyleSheet(self.base_button_style + "QPushButton { color: dimgray; }")
+        self.update_pin_button_style()
         
         # 在Windows上使用更可靠的方法
         if sys.platform == 'win32':
@@ -585,13 +837,33 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Ensure topmost error: {e}")
             
+    def show_knowledge_base(self):
+        """Switch to knowledge base tab"""
+        self.tab_widget.setCurrentIndex(1)  # Switch to knowledge base tab
+    
     def show_settings(self):
         """Shows the settings dialog"""
-        dialog = SettingsDialog(self)
-        if dialog.exec():
-            # Save settings if dialog was accepted
-            settings = dialog.get_settings()
-            save_app_config(settings)
+        # Create a menu to choose between general settings and knowledge base settings
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtCore import QPoint
+        
+        menu = QMenu(self)
+        general_action = menu.addAction("常规设置")
+        kb_action = menu.addAction("知识库设置")
+        
+        # Show menu at button position
+        button_pos = self.settings_button.mapToGlobal(QPoint(0, self.settings_button.height()))
+        action = menu.exec(button_pos)
+        
+        if action == general_action:
+            dialog = SettingsDialog(self)
+            if dialog.exec():
+                # Save settings if dialog was accepted
+                settings = dialog.get_settings()
+                save_app_config(settings)
+        elif action == kb_action:
+            dialog = KnowledgeBaseSettingsDialog(self)
+            dialog.exec()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

@@ -5,11 +5,19 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "chromadb>=1.0.16",
     "google-genai>=1.26.0",
     "langchain>=0.3.26",
     "langchain-community>=0.3.27",
+    "langchain-google-genai>=2.1.9",
     "langchain-openai>=0.3.28",
+    "langchain-text-splitters>=0.3.8",
     "mss>=10.0.0",
+    "pandas>=2.3.1",
+    "pdf2image>=1.17.0",
+    "pdfplumber>=0.11.7",
     "pillow>=11.3.0",
+    "pypdf2>=3.0.1",
     "pyside6>=6.9.1",
+    "requests>=2.32.4",
 ]

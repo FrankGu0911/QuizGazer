@@ -6,3 +6,10 @@ pillow
 google-genai
 langchain-google-genai
 langchain-community
+chromadb
+requests
+PyPDF2
+pdfplumber
+langchain-text-splitters
+pandas
+pdf2image

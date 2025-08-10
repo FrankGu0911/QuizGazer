@@ -7,6 +7,96 @@ from langchain_openai import ChatOpenAI
 from langchain.schema.messages import HumanMessage, SystemMessage
 from utils.config_manager import get_model_config
 
+# Import knowledge base components
+try:
+    from core.knowledge_base.rag_pipeline import RAGPipeline
+    from core.knowledge_base.manager import KnowledgeBaseManager
+    from core.knowledge_base.models import ChromaDBConfig
+    from utils.config_manager import get_knowledge_base_config, get_chromadb_config
+    KNOWLEDGE_BASE_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Knowledge base components not available: {e}")
+    RAGPipeline = None
+    KnowledgeBaseManager = None
+    ChromaDBConfig = None
+    get_knowledge_base_config = None
+    get_chromadb_config = None
+    KNOWLEDGE_BASE_AVAILABLE = False
+
+# Global RAG pipeline instance
+_rag_pipeline = None
+_knowledge_base_manager = None
+
+def initialize_knowledge_base():
+    """Initialize the knowledge base and RAG pipeline."""
+    global _rag_pipeline, _knowledge_base_manager
+    
+    if not KNOWLEDGE_BASE_AVAILABLE:
+        logging.warning("Knowledge base components not available, skipping initialization")
+        return False
+    
+    try:
+        # Load configuration
+        kb_config = get_knowledge_base_config() if get_knowledge_base_config else {}
+        chromadb_config_dict = get_chromadb_config() if get_chromadb_config else {}
+        
+        if not kb_config.get('enabled', False):
+            logging.info("Knowledge base is disabled in configuration")
+            return False
+        
+        # Create ChromaDB configuration
+        chromadb_config = ChromaDBConfig(
+            connection_type=chromadb_config_dict.get('connection_type', 'local'),
+            host=chromadb_config_dict.get('host'),
+            port=chromadb_config_dict.get('port'),
+            path=chromadb_config_dict.get('path', './data/chromadb'),
+            auth_credentials=chromadb_config_dict.get('auth_credentials'),
+            ssl_enabled=chromadb_config_dict.get('ssl_enabled', False)
+        )
+        
+        # Initialize knowledge base manager
+        storage_path = kb_config.get('storage_path', './data/knowledge_base')
+        _knowledge_base_manager = KnowledgeBaseManager(
+            storage_path=storage_path,
+            chromadb_config=chromadb_config
+        )
+        
+        # Initialize RAG pipeline with LLM service integration
+        _rag_pipeline = RAGPipeline(
+            knowledge_base_manager=_knowledge_base_manager,
+            llm_service=_get_llm_response_for_rag
+        )
+        
+        logging.info("Knowledge base and RAG pipeline initialized successfully")
+        return True
+        
+    except Exception as e:
+        logging.error(f"Failed to initialize knowledge base: {e}")
+        return False
+
+def get_rag_pipeline():
+    """Get the global RAG pipeline instance."""
+    return _rag_pipeline
+
+def get_knowledge_base_manager():
+    """Get the global knowledge base manager instance."""
+    return _knowledge_base_manager
+
+def is_knowledge_base_available():
+    """Check if knowledge base is available and initialized."""
+    return KNOWLEDGE_BASE_AVAILABLE and _rag_pipeline is not None
+
+def _get_llm_response_for_rag(prompt: str) -> str:
+    """
+    Internal function to get LLM response for RAG pipeline.
+    This wraps the existing get_answer_from_text function.
+    """
+    try:
+        return get_answer_from_text(prompt, force_search=False)
+    except Exception as e:
+        logging.error(f"Error getting LLM response for RAG: {e}")
+        return f"抱歉，处理您的问题时出现错误：{str(e)}"
+
 def _extract_longest_json(text):
     """
     从文本中提取最长的JSON结构，优先匹配[]数组，然后匹配{}对象
@@ -265,16 +355,35 @@ def get_question_from_image(image_bytes):
         return f"An error occurred while communicating with the VLM: {e}"
 
 
-def get_answer_from_text(question_text, force_search=False):
+def get_answer_from_text(question_text, force_search=False, use_knowledge_base=True):
     """
     Sends a question text to the configured LLM to get an answer.
+    Optionally uses knowledge base for enhanced responses.
 
     Args:
         question_text (str): The question to be answered.
+        force_search (bool): Whether to force search tools usage.
+        use_knowledge_base (bool): Whether to use knowledge base for enhanced answers.
 
     Returns:
         str: The answer from the LLM, or an error message.
     """
+    # Try to use knowledge base first if available and enabled
+    if use_knowledge_base and is_knowledge_base_available():
+        try:
+            rag_pipeline = get_rag_pipeline()
+            if rag_pipeline and rag_pipeline.should_use_knowledge_base():
+                logging.info("Using knowledge base for enhanced response")
+                enhanced_response = rag_pipeline.process_query_with_knowledge(question_text)
+                if enhanced_response and not enhanced_response.startswith("抱歉"):
+                    return enhanced_response
+                else:
+                    logging.info("Knowledge base response not satisfactory, falling back to standard LLM")
+        except Exception as e:
+            logging.error(f"Error using knowledge base: {e}")
+            logging.info("Falling back to standard LLM response")
+    
+    # Standard LLM processing (original implementation)
     llm_config = get_model_config('llm')
     if not llm_config:
         return "Error: LLM configuration is missing or invalid."
@@ -359,3 +468,148 @@ def get_answer_from_text(question_text, force_search=False):
             return response.content
         except Exception as e:
             return f"An error occurred while communicating with the LLM: {e}"
+
+# Knowledge Base Management Functions
+
+def get_knowledge_base_status():
+    """
+    Get the current status of the knowledge base.
+    
+    Returns:
+        dict: Knowledge base status information
+    """
+    if not is_knowledge_base_available():
+        return {
+            "available": False,
+            "enabled": False,
+            "error": "Knowledge base not initialized or not available"
+        }
+    
+    try:
+        rag_pipeline = get_rag_pipeline()
+        return rag_pipeline.get_knowledge_base_status()
+    except Exception as e:
+        return {
+            "available": False,
+            "enabled": False,
+            "error": str(e)
+        }
+
+def set_knowledge_base_collections(collection_ids):
+    """
+    Set the collections to use for knowledge base queries.
+    
+    Args:
+        collection_ids (list): List of collection IDs to use
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if not is_knowledge_base_available():
+        return False
+    
+    try:
+        rag_pipeline = get_rag_pipeline()
+        rag_pipeline.set_selected_collections(collection_ids)
+        return True
+    except Exception as e:
+        logging.error(f"Error setting knowledge base collections: {e}")
+        return False
+
+def get_knowledge_base_collections():
+    """
+    Get available knowledge base collections.
+    
+    Returns:
+        list: List of available collections
+    """
+    if not is_knowledge_base_available():
+        return []
+    
+    try:
+        kb_manager = get_knowledge_base_manager()
+        return kb_manager.list_collections()
+    except Exception as e:
+        logging.error(f"Error getting knowledge base collections: {e}")
+        return []
+
+def enable_knowledge_base():
+    """
+    Enable knowledge base functionality.
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if not is_knowledge_base_available():
+        return False
+    
+    try:
+        rag_pipeline = get_rag_pipeline()
+        rag_pipeline.enable_knowledge_base()
+        return True
+    except Exception as e:
+        logging.error(f"Error enabling knowledge base: {e}")
+        return False
+
+def disable_knowledge_base():
+    """
+    Disable knowledge base functionality.
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if not is_knowledge_base_available():
+        return False
+    
+    try:
+        rag_pipeline = get_rag_pipeline()
+        rag_pipeline.disable_knowledge_base()
+        return True
+    except Exception as e:
+        logging.error(f"Error disabling knowledge base: {e}")
+        return False
+
+def search_knowledge_preview(query, collections=None, top_k=3):
+    """
+    Search knowledge base and return preview results.
+    
+    Args:
+        query (str): Search query
+        collections (list): Collections to search (None for all selected)
+        top_k (int): Maximum number of results
+        
+    Returns:
+        list: List of knowledge fragment previews
+    """
+    if not is_knowledge_base_available():
+        return []
+    
+    try:
+        rag_pipeline = get_rag_pipeline()
+        return rag_pipeline.search_knowledge_preview(query, collections, top_k)
+    except Exception as e:
+        logging.error(f"Error searching knowledge base: {e}")
+        return []
+
+def get_knowledge_base_statistics():
+    """
+    Get knowledge base statistics.
+    
+    Returns:
+        dict: Knowledge base statistics
+    """
+    if not is_knowledge_base_available():
+        return {"error": "Knowledge base not available"}
+    
+    try:
+        kb_manager = get_knowledge_base_manager()
+        return kb_manager.get_knowledge_base_stats()
+    except Exception as e:
+        logging.error(f"Error getting knowledge base statistics: {e}")
+        return {"error": str(e)}
+
+# Initialize knowledge base on module import
+try:
+    initialize_knowledge_base()
+except Exception as e:
+    logging.error(f"Failed to initialize knowledge base on module import: {e}")

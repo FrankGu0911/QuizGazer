@@ -1,0 +1,1286 @@
+"""
+Knowledge Base Panel - UI components for knowledge base management.
+"""
+
+import os
+import sys
+from typing import List, Optional
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget,
+    QListWidgetItem, QTextEdit, QLineEdit, QComboBox, QProgressBar,
+    QFileDialog, QMessageBox, QDialog, QFormLayout, QDialogButtonBox,
+    QCheckBox, QGroupBox, QSplitter, QTabWidget, QTableWidget,
+    QTableWidgetItem, QHeaderView, QFrame, QScrollArea
+)
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize
+from PySide6.QtGui import QFont, QIcon
+
+# Import knowledge base services
+try:
+    sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+    from core import ai_services
+    from core.knowledge_base.models import DocumentType
+    KNOWLEDGE_BASE_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Knowledge base not available: {e}")
+    KNOWLEDGE_BASE_AVAILABLE = False
+    # Create a mock DocumentType for when knowledge base is not available
+
+    class DocumentType:
+        KNOWLEDGE_DOCUMENT = "knowledge_document"
+        QUESTION_BANK = "question_bank"
+
+
+class DocumentUploadDialog(QDialog):
+    """Dialog for uploading documents to knowledge base."""
+
+    def __init__(self, collections: List = None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("上传文档")
+        self.setMinimumSize(400, 300)
+        self.collections = collections or []
+        self.selected_files = []
+
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # File selection
+        file_group = QGroupBox("选择文件")
+        file_layout = QVBoxLayout(file_group)
+
+        file_button_layout = QHBoxLayout()
+        self.select_files_button = QPushButton("选择文件...")
+        self.select_files_button.clicked.connect(self.select_files)
+        file_button_layout.addWidget(self.select_files_button)
+        file_button_layout.addStretch()
+
+        self.files_list = QListWidget()
+        self.files_list.setMaximumHeight(100)
+
+        file_layout.addLayout(file_button_layout)
+        file_layout.addWidget(self.files_list)
+
+        # Document type selection
+        type_group = QGroupBox("文档类型")
+        type_layout = QVBoxLayout(type_group)
+
+        self.doc_type_combo = QComboBox()
+        self.doc_type_combo.addItem("知识文档 (PDF, Markdown)", "knowledge")
+        self.doc_type_combo.addItem("题库 (CSV)", "question_bank")
+
+        type_layout.addWidget(self.doc_type_combo)
+
+        # Collection selection
+        collection_group = QGroupBox("目标集合")
+        collection_layout = QVBoxLayout(collection_group)
+
+        collection_selection_layout = QHBoxLayout()
+        self.collection_combo = QComboBox()
+        self.collection_combo.addItem("创建新集合...", None)
+
+        for collection in self.collections:
+            self.collection_combo.addItem(collection.name, collection.id)
+
+        self.new_collection_button = QPushButton("新建集合")
+        self.new_collection_button.clicked.connect(self.create_new_collection)
+
+        collection_selection_layout.addWidget(self.collection_combo)
+        collection_selection_layout.addWidget(self.new_collection_button)
+
+        # New collection fields (initially hidden)
+        self.new_collection_widget = QWidget()
+        new_collection_layout = QFormLayout(self.new_collection_widget)
+
+        self.collection_name_input = QLineEdit()
+        self.collection_description_input = QTextEdit()
+        self.collection_description_input.setMaximumHeight(60)
+
+        new_collection_layout.addRow("集合名称:", self.collection_name_input)
+        new_collection_layout.addRow("描述:", self.collection_description_input)
+
+        self.new_collection_widget.hide()
+
+        collection_layout.addLayout(collection_selection_layout)
+        collection_layout.addWidget(self.new_collection_widget)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        self.upload_button = QPushButton("上传")
+        self.cancel_button = QPushButton("取消")
+
+        self.upload_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+        button_layout.addStretch()
+        button_layout.addWidget(self.upload_button)
+        button_layout.addWidget(self.cancel_button)
+
+        # Add all groups to main layout
+        layout.addWidget(file_group)
+        layout.addWidget(type_group)
+        layout.addWidget(collection_group)
+        layout.addLayout(button_layout)
+
+        # Connect signals
+        self.collection_combo.currentIndexChanged.connect(
+            self.on_collection_changed)
+
+    def select_files(self):
+        """Open file dialog to select documents."""
+        file_dialog = QFileDialog(self)
+        file_dialog.setFileMode(QFileDialog.ExistingFiles)
+        file_dialog.setNameFilter(
+            "Documents (*.pdf *.md *.csv);;PDF Files (*.pdf);;Markdown Files (*.md);;CSV Files (*.csv)")
+
+        if file_dialog.exec():
+            self.selected_files = file_dialog.selectedFiles()
+            self.update_files_list()
+
+    def update_files_list(self):
+        """Update the files list widget."""
+        self.files_list.clear()
+        for file_path in self.selected_files:
+            filename = os.path.basename(file_path)
+            self.files_list.addItem(filename)
+
+    def on_collection_changed(self):
+        """Handle collection selection change."""
+        current_data = self.collection_combo.currentData()
+        if current_data is None:  # "Create new collection" selected
+            self.new_collection_widget.show()
+        else:
+            self.new_collection_widget.hide()
+
+    def create_new_collection(self):
+        """Show new collection creation fields."""
+        self.collection_combo.setCurrentIndex(
+            0)  # Select "Create new collection"
+        self.new_collection_widget.show()
+
+    def get_upload_data(self):
+        """Get the upload configuration."""
+        if not self.selected_files:
+            return None
+
+        doc_type = self.doc_type_combo.currentData()
+        collection_id = self.collection_combo.currentData()
+
+        result = {
+            'files': self.selected_files,
+            'document_type': doc_type,
+            'collection_id': collection_id
+        }
+
+        # If creating new collection, add collection info
+        if collection_id is None:
+            collection_name = self.collection_name_input.text().strip()
+            collection_description = self.collection_description_input.toPlainText().strip()
+
+            if not collection_name:
+                QMessageBox.warning(self, "错误", "请输入集合名称")
+                return None
+
+            result['new_collection'] = {
+                'name': collection_name,
+                'description': collection_description
+            }
+
+        return result
+
+
+class CreateCollectionDialog(QDialog):
+    """Dialog for creating a new collection."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("创建新集合")
+        self.setMinimumSize(400, 200)
+
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Form
+        form_layout = QFormLayout()
+
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("输入集合名称...")
+
+        self.description_input = QTextEdit()
+        self.description_input.setMaximumHeight(80)
+        self.description_input.setPlaceholderText("输入集合描述（可选）...")
+
+        form_layout.addRow("名称*:", self.name_input)
+        form_layout.addRow("描述:", self.description_input)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        self.create_button = QPushButton("创建")
+        self.cancel_button = QPushButton("取消")
+
+        self.create_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+        button_layout.addStretch()
+        button_layout.addWidget(self.create_button)
+        button_layout.addWidget(self.cancel_button)
+
+        layout.addLayout(form_layout)
+        layout.addLayout(button_layout)
+
+    def get_collection_data(self):
+        """Get the collection data from the form."""
+        name = self.name_input.text().strip()
+        description = self.description_input.toPlainText().strip()
+
+        if not name:
+            QMessageBox.warning(self, "错误", "请输入集合名称")
+            return None
+
+        return {
+            'name': name,
+            'description': description
+        }
+
+
+class CollectionDetailsDialog(QDialog):
+    """Dialog for viewing collection details and documents."""
+
+    def __init__(self, collection_id: str, parent=None):
+        super().__init__(parent)
+        self.collection_id = collection_id
+        self.collection = None
+        self.documents = []
+
+        self.setWindowTitle("集合详情")
+        self.setMinimumSize(700, 500)
+
+        self.setup_ui()
+        self.load_collection_data()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Collection info section
+        info_group = QGroupBox("集合信息")
+        info_layout = QFormLayout(info_group)
+
+        self.name_label = QLabel()
+        self.description_label = QLabel()
+        self.created_label = QLabel()
+        self.doc_count_label = QLabel()
+        self.chunk_count_label = QLabel()
+
+        info_layout.addRow("名称:", self.name_label)
+        info_layout.addRow("描述:", self.description_label)
+        info_layout.addRow("创建时间:", self.created_label)
+        info_layout.addRow("文档数量:", self.doc_count_label)
+        info_layout.addRow("知识片段:", self.chunk_count_label)
+
+        # Documents section
+        docs_group = QGroupBox("文档列表")
+        docs_layout = QVBoxLayout(docs_group)
+
+        # Documents table
+        self.documents_table = QTableWidget()
+        self.documents_table.setColumnCount(5)
+        self.documents_table.setHorizontalHeaderLabels(
+            ["文件名", "类型", "大小", "处理时间", "操作"])
+
+        docs_header = self.documents_table.horizontalHeader()
+        docs_header.setSectionResizeMode(0, QHeaderView.Stretch)
+        docs_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        docs_header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        docs_header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        docs_header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+
+        docs_layout.addWidget(self.documents_table)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        self.refresh_button = QPushButton("刷新")
+        self.close_button = QPushButton("关闭")
+
+        self.refresh_button.clicked.connect(self.load_collection_data)
+        self.close_button.clicked.connect(self.accept)
+
+        button_layout.addStretch()
+        button_layout.addWidget(self.refresh_button)
+        button_layout.addWidget(self.close_button)
+
+        # Add to main layout
+        layout.addWidget(info_group)
+        layout.addWidget(docs_group)
+        layout.addLayout(button_layout)
+
+    def load_collection_data(self):
+        """Load collection data and documents."""
+        if not KNOWLEDGE_BASE_AVAILABLE:
+            return
+
+        try:
+            # Get collection info
+            collections = ai_services.get_knowledge_base_collections()
+            self.collection = None
+
+            for collection in collections:
+                if collection.id == self.collection_id:
+                    self.collection = collection
+                    break
+
+            if not self.collection:
+                QMessageBox.warning(self, "错误", "集合不存在")
+                self.reject()
+                return
+
+            # Update collection info
+            self.name_label.setText(self.collection.name)
+            self.description_label.setText(
+                self.collection.description or "无描述")
+
+            created_time = self.collection.created_at.strftime("%Y-%m-%d %H:%M:%S") if hasattr(
+                self.collection.created_at, 'strftime') else str(self.collection.created_at)
+            self.created_label.setText(created_time)
+            self.doc_count_label.setText(str(self.collection.document_count))
+            self.chunk_count_label.setText(str(self.collection.total_chunks))
+
+            # Get collection statistics for more details
+            kb_manager = ai_services.get_knowledge_base_manager()
+            if kb_manager:
+                stats = kb_manager.get_collection_stats(self.collection_id)
+                if 'recent_documents' in stats:
+                    self.update_documents_table(stats['recent_documents'])
+
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"加载集合数据失败: {e}")
+
+    def update_documents_table(self, documents):
+        """Update the documents table."""
+        self.documents_table.setRowCount(len(documents))
+
+        for row, doc in enumerate(documents):
+            # Filename
+            self.documents_table.setItem(
+                row, 0, QTableWidgetItem(doc.get('filename', '未知')))
+
+            # Type (would need to be added to document info)
+            doc_type = doc.get('document_type', '未知')
+            self.documents_table.setItem(row, 1, QTableWidgetItem(doc_type))
+
+            # Size (would need to be added to document info)
+            file_size = doc.get('file_size', 0)
+            if file_size > 0:
+                size_str = f"{file_size / 1024:.1f} KB" if file_size < 1024 * \
+                    1024 else f"{file_size / (1024*1024):.1f} MB"
+            else:
+                size_str = "未知"
+            self.documents_table.setItem(row, 2, QTableWidgetItem(size_str))
+
+            # Processed time
+            processed_time = doc.get('processed_at', '未知')
+            if processed_time != '未知':
+                try:
+                    from datetime import datetime
+                    if isinstance(processed_time, str):
+                        processed_time = datetime.fromisoformat(
+                            processed_time.replace('Z', '+00:00'))
+                    processed_time = processed_time.strftime("%Y-%m-%d %H:%M")
+                except:
+                    pass
+            self.documents_table.setItem(
+                row, 3, QTableWidgetItem(str(processed_time)))
+
+            # Actions
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(2, 2, 2, 2)
+
+            remove_button = QPushButton("移除")
+            remove_button.setMaximumSize(50, 25)
+            remove_button.setStyleSheet(
+                "QPushButton { background-color: #ffcccc; }")
+            # remove_button.clicked.connect(lambda checked, doc_id=doc.get('id'): self.remove_document(doc_id))
+
+            actions_layout.addWidget(remove_button)
+            actions_layout.addStretch()
+
+            self.documents_table.setCellWidget(row, 4, actions_widget)
+
+
+class CollectionManagementDialog(QDialog):
+    """Dialog for managing collections."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("集合管理")
+        self.setMinimumSize(600, 400)
+        self.collections = []
+
+        self.setup_ui()
+        self.refresh_collections()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Collections table
+        self.collections_table = QTableWidget()
+        self.collections_table.setColumnCount(4)
+        self.collections_table.setHorizontalHeaderLabels(
+            ["名称", "文档数", "创建时间", "操作"])
+
+        header = self.collections_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        self.create_button = QPushButton("创建集合")
+        self.import_button = QPushButton("导入集合")
+        self.refresh_button = QPushButton("刷新")
+        self.close_button = QPushButton("关闭")
+
+        self.create_button.clicked.connect(self.create_collection)
+        self.import_button.clicked.connect(self.import_collection)
+        self.refresh_button.clicked.connect(self.refresh_collections)
+        self.close_button.clicked.connect(self.accept)
+
+        button_layout.addWidget(self.create_button)
+        button_layout.addWidget(self.import_button)
+        button_layout.addWidget(self.refresh_button)
+        button_layout.addStretch()
+        button_layout.addWidget(self.close_button)
+
+        layout.addWidget(self.collections_table)
+        layout.addLayout(button_layout)
+
+    def refresh_collections(self):
+        """Refresh the collections list."""
+        if not KNOWLEDGE_BASE_AVAILABLE:
+            return
+
+        try:
+            self.collections = ai_services.get_knowledge_base_collections()
+            self.update_collections_table()
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"获取集合列表失败: {e}")
+
+    def update_collections_table(self):
+        """Update the collections table."""
+        self.collections_table.setRowCount(len(self.collections))
+
+        for row, collection in enumerate(self.collections):
+            # Name
+            self.collections_table.setItem(
+                row, 0, QTableWidgetItem(collection.name))
+
+            # Document count
+            self.collections_table.setItem(
+                row, 1, QTableWidgetItem(str(collection.document_count)))
+
+            # Created time
+            created_time = collection.created_at.strftime("%Y-%m-%d %H:%M") if hasattr(
+                collection.created_at, 'strftime') else str(collection.created_at)
+            self.collections_table.setItem(
+                row, 2, QTableWidgetItem(created_time))
+
+            # Actions
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(2, 2, 2, 2)
+            actions_layout.setSpacing(2)
+
+            # Details button
+            details_button = QPushButton("详情")
+            details_button.setMaximumSize(40, 25)
+            details_button.clicked.connect(
+                lambda checked, cid=collection.id: self.view_collection_details(cid))
+
+            # Rename button
+            rename_button = QPushButton("重命名")
+            rename_button.setMaximumSize(50, 25)
+            rename_button.clicked.connect(
+                lambda checked, cid=collection.id: self.rename_collection(cid))
+
+            # Export button
+            export_button = QPushButton("导出")
+            export_button.setMaximumSize(40, 25)
+            export_button.clicked.connect(
+                lambda checked, cid=collection.id: self.export_collection(cid))
+
+            # Delete button
+            delete_button = QPushButton("删除")
+            delete_button.setMaximumSize(40, 25)
+            delete_button.setStyleSheet(
+                "QPushButton { background-color: #ffcccc; }")
+            delete_button.clicked.connect(
+                lambda checked, cid=collection.id: self.delete_collection(cid))
+
+            actions_layout.addWidget(details_button)
+            actions_layout.addWidget(rename_button)
+            actions_layout.addWidget(export_button)
+            actions_layout.addWidget(delete_button)
+            actions_layout.addStretch()
+
+            self.collections_table.setCellWidget(row, 3, actions_widget)
+
+    def create_collection(self):
+        """Create a new collection."""
+        dialog = CreateCollectionDialog(self)
+
+        if dialog.exec():
+            collection_data = dialog.get_collection_data()
+            if collection_data:
+                try:
+                    # Create collection using knowledge base manager
+                    kb_manager = ai_services.get_knowledge_base_manager()
+                    if kb_manager:
+                        collection = kb_manager.create_collection(
+                            name=collection_data['name'],
+                            description=collection_data['description']
+                        )
+                        QMessageBox.information(
+                            self, "成功", f"集合 '{collection.name}' 创建成功")
+                        self.refresh_collections()
+                    else:
+                        QMessageBox.warning(self, "错误", "知识库管理器不可用")
+                except Exception as e:
+                    QMessageBox.warning(self, "错误", f"创建集合失败: {e}")
+
+    def delete_collection(self, collection_id: str):
+        """Delete a collection."""
+        # Find collection name for confirmation
+        collection_name = "未知集合"
+        for collection in self.collections:
+            if collection.id == collection_id:
+                collection_name = collection.name
+                break
+
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定要删除集合 '{collection_name}' 吗？这将删除集合中的所有文档。",
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            try:
+                kb_manager = ai_services.get_knowledge_base_manager()
+                if kb_manager:
+                    success = kb_manager.delete_collection(collection_id)
+                    if success:
+                        QMessageBox.information(self, "成功", "集合删除成功")
+                        self.refresh_collections()
+                    else:
+                        QMessageBox.warning(self, "错误", "删除集合失败")
+                else:
+                    QMessageBox.warning(self, "错误", "知识库管理器不可用")
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"删除集合失败: {e}")
+
+    def rename_collection(self, collection_id: str):
+        """Rename a collection."""
+        # Find current collection
+        current_collection = None
+        for collection in self.collections:
+            if collection.id == collection_id:
+                current_collection = collection
+                break
+
+        if not current_collection:
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("重命名集合")
+        dialog.setMinimumSize(300, 100)
+
+        layout = QFormLayout(dialog)
+
+        name_input = QLineEdit()
+        name_input.setText(current_collection.name)
+        name_input.selectAll()
+
+        layout.addRow("新名称:", name_input)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+
+        if dialog.exec():
+            new_name = name_input.text().strip()
+            if not new_name:
+                QMessageBox.warning(self, "错误", "请输入集合名称")
+                return
+
+            if new_name == current_collection.name:
+                return  # No change
+
+            try:
+                # Note: This would require implementing rename functionality in the knowledge base manager
+                QMessageBox.information(self, "提示", "重命名功能将在后续版本中实现")
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"重命名集合失败: {e}")
+
+    def export_collection(self, collection_id: str):
+        """Export a collection."""
+        # Find collection name
+        collection_name = "未知集合"
+        for collection in self.collections:
+            if collection.id == collection_id:
+                collection_name = collection.name
+                break
+
+        # Choose export location
+        file_dialog = QFileDialog(self)
+        file_dialog.setAcceptMode(QFileDialog.AcceptSave)
+        file_dialog.setNameFilter("JSON Files (*.json)")
+        file_dialog.setDefaultSuffix("json")
+        file_dialog.selectFile(f"{collection_name}_export.json")
+
+        if file_dialog.exec():
+            export_path = file_dialog.selectedFiles()[0]
+
+            try:
+                kb_manager = ai_services.get_knowledge_base_manager()
+                if kb_manager:
+                    exported_file = kb_manager.export_collection(
+                        collection_id, "json")
+
+                    # Copy to selected location
+                    import shutil
+                    shutil.copy2(exported_file, export_path)
+
+                    QMessageBox.information(
+                        self, "成功", f"集合已导出到: {export_path}")
+                else:
+                    QMessageBox.warning(self, "错误", "知识库管理器不可用")
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"导出集合失败: {e}")
+
+    def import_collection(self):
+        """Import a collection."""
+        file_dialog = QFileDialog(self)
+        file_dialog.setFileMode(QFileDialog.ExistingFile)
+        file_dialog.setNameFilter("JSON Files (*.json)")
+
+        if file_dialog.exec():
+            import_path = file_dialog.selectedFiles()[0]
+
+            # Ask for merge strategy
+            merge_dialog = QMessageBox(self)
+            merge_dialog.setWindowTitle("导入策略")
+            merge_dialog.setText("如果集合已存在，选择处理方式:")
+
+            skip_button = merge_dialog.addButton("跳过", QMessageBox.ActionRole)
+            replace_button = merge_dialog.addButton(
+                "替换", QMessageBox.ActionRole)
+            merge_button = merge_dialog.addButton("合并", QMessageBox.ActionRole)
+            cancel_button = merge_dialog.addButton(
+                "取消", QMessageBox.RejectRole)
+
+            merge_dialog.exec()
+
+            clicked_button = merge_dialog.clickedButton()
+            if clicked_button == cancel_button:
+                return
+
+            if clicked_button == skip_button:
+                merge_strategy = "skip"
+            elif clicked_button == replace_button:
+                merge_strategy = "replace"
+            else:
+                merge_strategy = "merge"
+
+            try:
+                kb_manager = ai_services.get_knowledge_base_manager()
+                if kb_manager:
+                    collection = kb_manager.import_collection(
+                        import_path, merge_strategy)
+                    QMessageBox.information(
+                        self, "成功", f"集合 '{collection.name}' 导入成功")
+                    self.refresh_collections()
+                else:
+                    QMessageBox.warning(self, "错误", "知识库管理器不可用")
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"导入集合失败: {e}")
+
+    def view_collection_details(self, collection_id: str):
+        """View detailed information about a collection."""
+        dialog = CollectionDetailsDialog(collection_id, self)
+        dialog.exec()
+
+
+class DocumentProcessingWorker(QThread):
+    """Worker thread for document processing."""
+
+    progress_updated = Signal(int)  # Progress percentage
+    status_updated = Signal(str)    # Status message
+    finished = Signal(bool, str)    # Success, message
+
+    def __init__(self, upload_data):
+        super().__init__()
+        self.upload_data = upload_data
+
+    def run(self):
+        """Process documents in background."""
+        try:
+            if not KNOWLEDGE_BASE_AVAILABLE:
+                self.finished.emit(False, "知识库功能不可用")
+                return
+
+            files = self.upload_data['files']
+            collection_id = self.upload_data['collection_id']
+            document_type = self.upload_data['document_type']
+            total_files = len(files)
+
+            # Get document type enum
+            if document_type == "knowledge":
+                doc_type = DocumentType.KNOWLEDGE_DOCUMENT
+            elif document_type == "question_bank":
+                doc_type = DocumentType.QUESTION_BANK
+            else:
+                self.finished.emit(False, f"未知的文档类型: {document_type}")
+                return
+
+            kb_manager = ai_services.get_knowledge_base_manager()
+            if not kb_manager:
+                self.finished.emit(False, "知识库管理器不可用")
+                return
+
+            successful_uploads = 0
+            failed_uploads = []
+
+            for i, file_path in enumerate(files):
+                filename = os.path.basename(file_path)
+                self.status_updated.emit(f"处理文件: {filename}")
+
+                try:
+                    # Submit document for processing
+                    task = kb_manager.add_document_async(
+                        collection_id=collection_id,
+                        file_path=file_path,
+                        doc_type=doc_type
+                    )
+
+                    # Wait for processing to complete (simplified approach)
+                    # In a real implementation, you might want to track tasks separately
+                    import time
+                    max_wait_time = 60  # Maximum wait time in seconds
+                    wait_time = 0
+
+                    while wait_time < max_wait_time:
+                        task_status = kb_manager.get_processing_status(task.id)
+                        if task_status and task_status.status.value in ["completed", "failed", "cancelled"]:
+                            break
+
+                        time.sleep(1)
+                        wait_time += 1
+
+                        # Update progress within file processing
+                        file_progress = int(
+                            (i + wait_time / max_wait_time) / total_files * 100)
+                        self.progress_updated.emit(min(file_progress, 99))
+
+                    # Check final status
+                    final_status = kb_manager.get_processing_status(task.id)
+                    if final_status and final_status.status.value == "completed":
+                        successful_uploads += 1
+                    else:
+                        failed_uploads.append(f"{filename}: 处理超时或失败")
+
+                except Exception as e:
+                    failed_uploads.append(f"{filename}: {str(e)}")
+
+                # Update overall progress
+                progress = int((i + 1) / total_files * 100)
+                self.progress_updated.emit(progress)
+
+            # Prepare result message
+            if successful_uploads == total_files:
+                message = f"所有 {total_files} 个文件处理完成"
+                self.finished.emit(True, message)
+            elif successful_uploads > 0:
+                message = f"{successful_uploads}/{total_files} 个文件处理成功"
+                if failed_uploads:
+                    message += f"\n失败的文件:\n" + "\n".join(failed_uploads[:3])
+                    if len(failed_uploads) > 3:
+                        message += f"\n... 还有 {len(failed_uploads) - 3} 个失败"
+                self.finished.emit(True, message)
+            else:
+                message = "所有文件处理失败"
+                if failed_uploads:
+                    message += f"\n错误信息:\n" + "\n".join(failed_uploads[:3])
+                self.finished.emit(False, message)
+
+        except Exception as e:
+            self.finished.emit(False, f"处理失败: {str(e)}")
+
+
+class KnowledgeBasePanel(QWidget):
+    """Main knowledge base panel widget."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        # Detect theme
+        self.is_dark_mode = self.detect_dark_mode()
+        self.setup_theme_styles()
+        self.collections = []
+        self.selected_collections = []
+        self.processing_worker = None
+
+        self.setup_ui()
+        self.refresh_data()
+
+        # Setup refresh timer
+        self.refresh_timer = QTimer()
+        self.refresh_timer.timeout.connect(self.refresh_data)
+        self.refresh_timer.start(30000)  # Refresh every 30 seconds
+
+    def detect_dark_mode(self):
+        """Detect if the system is using dark mode."""
+        try:
+            import sys
+            if sys.platform == 'win32':
+                import winreg
+                try:
+                    registry = winreg.ConnectRegistry(
+                        None, winreg.HKEY_CURRENT_USER)
+                    key = winreg.OpenKey(
+                        registry, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+                    value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+                    winreg.CloseKey(key)
+                    return value == 0  # 0 means dark mode, 1 means light mode
+                except:
+                    pass
+
+            # Fallback: check Qt palette
+            from PySide6.QtWidgets import QApplication
+            palette = QApplication.palette()
+            window_color = palette.color(palette.Window)
+            return window_color.lightness() < 128
+        except:
+            return False  # Default to light mode if detection fails
+
+    def setup_theme_styles(self):
+        """Setup theme-aware styles."""
+        if self.is_dark_mode:
+            # Dark theme
+            self.bg_color = "#2D2D2D"
+            self.text_color = "#E0E0E0"
+            self.border_color = "#555555"
+            self.button_bg = "#404040"
+            self.button_hover = "#505050"
+            self.input_bg = "#3A3A3A"
+            self.group_bg = "#353535"
+        else:
+            # Light theme
+            self.bg_color = "#FFFFFF"
+            self.text_color = "#333333"
+            self.border_color = "#CCCCCC"
+            self.button_bg = "#EAEAEA"
+            self.button_hover = "#DCDCDC"
+            self.input_bg = "#FFFFFF"
+            self.group_bg = "#F5F5F5"
+
+        # Create style strings
+        self.widget_style = f"""
+            QWidget {{
+                background-color: {self.bg_color};
+                color: {self.text_color};
+            }}
+        """
+
+        self.group_style = f"""
+            QGroupBox {{
+                font-weight: bold;
+                border: 1px solid {self.border_color};
+                border-radius: 5px;
+                margin-top: 10px;
+                padding-top: 10px;
+                background-color: {self.group_bg};
+                color: {self.text_color};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+            }}
+        """
+
+        self.button_style = f"""
+            QPushButton {{
+                background-color: {self.button_bg};
+                border: 1px solid {self.border_color};
+                border-radius: 4px;
+                padding: 5px 10px;
+                color: {self.text_color};
+            }}
+            QPushButton:hover {{
+                background-color: {self.button_hover};
+            }}
+        """
+
+        self.input_style = f"""
+            QLineEdit, QTextEdit, QListWidget {{
+                background-color: {self.input_bg};
+                border: 1px solid {self.border_color};
+                border-radius: 3px;
+                padding: 3px;
+                color: {self.text_color};
+            }}
+        """
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        # Apply theme to main widget
+        self.setStyleSheet(self.widget_style)
+
+        # Title
+        title_label = QLabel("知识库")
+        title_font = QFont()
+        title_font.setPointSize(14)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+        title_label.setStyleSheet(
+            f"color: {self.text_color}; font-weight: bold;")
+
+        # Status section
+        status_group = QGroupBox("状态")
+        status_group.setStyleSheet(self.group_style)
+        status_layout = QVBoxLayout(status_group)
+
+        self.status_label = QLabel("正在加载...")
+        self.status_label.setStyleSheet(f"color: {self.text_color};")
+
+        self.enable_checkbox = QCheckBox("启用知识库")
+        self.enable_checkbox.setStyleSheet(f"color: {self.text_color};")
+        self.enable_checkbox.stateChanged.connect(self.toggle_knowledge_base)
+
+        status_layout.addWidget(self.status_label)
+        status_layout.addWidget(self.enable_checkbox)
+
+        # Collections section
+        collections_group = QGroupBox("集合管理")
+        collections_group.setStyleSheet(self.group_style)
+        collections_layout = QVBoxLayout(collections_group)
+
+        # Collection buttons
+        collection_buttons_layout = QHBoxLayout()
+        self.upload_button = QPushButton("上传文档")
+        self.upload_button.setStyleSheet(self.button_style)
+
+        self.manage_collections_button = QPushButton("管理集合")
+        self.manage_collections_button.setStyleSheet(self.button_style)
+
+        self.upload_button.clicked.connect(self.upload_documents)
+        self.manage_collections_button.clicked.connect(self.manage_collections)
+
+        collection_buttons_layout.addWidget(self.upload_button)
+        collection_buttons_layout.addWidget(self.manage_collections_button)
+        collection_buttons_layout.addStretch()
+
+        # Collections list
+        self.collections_list = QListWidget()
+        self.collections_list.setMaximumHeight(150)
+        self.collections_list.setStyleSheet(self.input_style)
+        self.collections_list.itemChanged.connect(
+            self.on_collection_selection_changed)
+
+        collections_label = QLabel("选择用于查询的集合:")
+        collections_label.setStyleSheet(f"color: {self.text_color};")
+
+        collections_layout.addLayout(collection_buttons_layout)
+        collections_layout.addWidget(collections_label)
+        collections_layout.addWidget(self.collections_list)
+
+        # Processing section
+        processing_group = QGroupBox("处理状态")
+        processing_group.setStyleSheet(self.group_style)
+        processing_layout = QVBoxLayout(processing_group)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.hide()
+
+        self.processing_status_label = QLabel("无正在处理的任务")
+        self.processing_status_label.setStyleSheet(
+            f"color: {self.text_color};")
+
+        processing_layout.addWidget(self.processing_status_label)
+        processing_layout.addWidget(self.progress_bar)
+
+        # Search preview section
+        search_group = QGroupBox("知识搜索预览")
+        search_group.setStyleSheet(self.group_style)
+        search_layout = QVBoxLayout(search_group)
+
+        search_input_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("输入搜索查询...")
+        self.search_input.setStyleSheet(self.input_style)
+
+        self.search_button = QPushButton("搜索")
+        self.search_button.setStyleSheet(self.button_style)
+        self.search_button.clicked.connect(self.search_knowledge)
+
+        search_input_layout.addWidget(self.search_input)
+        search_input_layout.addWidget(self.search_button)
+
+        self.search_results = QTextEdit()
+        self.search_results.setMaximumHeight(100)
+        self.search_results.setReadOnly(True)
+        self.search_results.setStyleSheet(self.input_style)
+
+        search_layout.addLayout(search_input_layout)
+        search_layout.addWidget(self.search_results)
+
+        # Add all groups to main layout
+        layout.addWidget(title_label)
+        layout.addWidget(status_group)
+        layout.addWidget(collections_group)
+        layout.addWidget(processing_group)
+        layout.addWidget(search_group)
+        layout.addStretch()
+
+        # Initial state
+        self.set_enabled_state(False)
+
+    def refresh_data(self):
+        """Refresh knowledge base data."""
+        if not KNOWLEDGE_BASE_AVAILABLE:
+            self.status_label.setText("知识库功能不可用")
+            return
+
+        try:
+            # Get knowledge base status
+            status = ai_services.get_knowledge_base_status()
+            self.update_status_display(status)
+
+            # Get collections
+            self.collections = ai_services.get_knowledge_base_collections()
+            self.update_collections_list()
+
+        except Exception as e:
+            self.status_label.setText(f"获取状态失败: {e}")
+
+    def update_status_display(self, status: dict):
+        """Update the status display."""
+        if not status:
+            self.status_label.setText("无法获取状态")
+            return
+
+        enabled = status.get('enabled', False)
+        available = status.get('available', False)
+        total_collections = status.get('total_collections', 0)
+        total_documents = status.get('total_documents', 0)
+        can_process = status.get('can_process_queries', False)
+
+        status_text = f"可用: {'是' if available else '否'} | "
+        status_text += f"集合: {total_collections} | "
+        status_text += f"文档: {total_documents} | "
+        status_text += f"可查询: {'是' if can_process else '否'}"
+
+        self.status_label.setText(status_text)
+
+        # Update checkbox without triggering signal
+        self.enable_checkbox.blockSignals(True)
+        self.enable_checkbox.setChecked(enabled)
+        self.enable_checkbox.blockSignals(False)
+
+        self.set_enabled_state(enabled and available)
+
+    def update_collections_list(self):
+        """Update the collections list widget."""
+        self.collections_list.clear()
+
+        for collection in self.collections:
+            item = QListWidgetItem(
+                f"{collection.name} ({collection.document_count} 文档)")
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            item.setData(Qt.UserRole, collection.id)
+            self.collections_list.addItem(item)
+
+    def set_enabled_state(self, enabled: bool):
+        """Set the enabled state of controls."""
+        self.upload_button.setEnabled(enabled)
+        self.manage_collections_button.setEnabled(enabled)
+        self.collections_list.setEnabled(enabled)
+        self.search_button.setEnabled(enabled)
+        self.search_input.setEnabled(enabled)
+
+    def toggle_knowledge_base(self, state):
+        """Toggle knowledge base enabled state."""
+        if not KNOWLEDGE_BASE_AVAILABLE:
+            return
+
+        try:
+            if state == Qt.Checked:
+                ai_services.enable_knowledge_base()
+            else:
+                ai_services.disable_knowledge_base()
+
+            # Refresh status after a short delay
+            QTimer.singleShot(500, self.refresh_data)
+
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"切换知识库状态失败: {e}")
+            # Revert checkbox state
+            self.enable_checkbox.blockSignals(True)
+            self.enable_checkbox.setChecked(not (state == Qt.Checked))
+            self.enable_checkbox.blockSignals(False)
+
+    def on_collection_selection_changed(self, item):
+        """Handle collection selection change."""
+        selected_ids = []
+
+        for i in range(self.collections_list.count()):
+            item = self.collections_list.item(i)
+            if item.checkState() == Qt.Checked:
+                collection_id = item.data(Qt.UserRole)
+                selected_ids.append(collection_id)
+
+        self.selected_collections = selected_ids
+
+        # Update AI services with selected collections
+        if KNOWLEDGE_BASE_AVAILABLE:
+            try:
+                ai_services.set_knowledge_base_collections(selected_ids)
+            except Exception as e:
+                print(f"Failed to set collections: {e}")
+
+    def upload_documents(self):
+        """Open document upload dialog."""
+        dialog = DocumentUploadDialog(self.collections, self)
+
+        if dialog.exec():
+            upload_data = dialog.get_upload_data()
+            if upload_data:
+                self.start_document_processing(upload_data)
+
+    def start_document_processing(self, upload_data):
+        """Start document processing in background."""
+        if self.processing_worker and self.processing_worker.isRunning():
+            QMessageBox.warning(self, "警告", "已有文档正在处理中")
+            return
+
+        try:
+            # Create new collection if needed
+            collection_id = upload_data['collection_id']
+
+            if collection_id is None and 'new_collection' in upload_data:
+                kb_manager = ai_services.get_knowledge_base_manager()
+                if kb_manager:
+                    new_collection = kb_manager.create_collection(
+                        name=upload_data['new_collection']['name'],
+                        description=upload_data['new_collection']['description']
+                    )
+                    collection_id = new_collection.id
+                    upload_data['collection_id'] = collection_id
+
+                    # Refresh collections list
+                    QTimer.singleShot(500, self.refresh_data)
+                else:
+                    QMessageBox.warning(self, "错误", "知识库管理器不可用")
+                    return
+
+            if not collection_id:
+                QMessageBox.warning(self, "错误", "无效的集合ID")
+                return
+
+            self.processing_worker = DocumentProcessingWorker(upload_data)
+            self.processing_worker.progress_updated.connect(
+                self.update_progress)
+            self.processing_worker.status_updated.connect(
+                self.update_processing_status)
+            self.processing_worker.finished.connect(
+                self.on_processing_finished)
+
+            self.progress_bar.show()
+            self.progress_bar.setValue(0)
+            self.processing_status_label.setText("开始处理文档...")
+
+            self.processing_worker.start()
+
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"启动文档处理失败: {e}")
+
+    def update_progress(self, progress):
+        """Update processing progress."""
+        self.progress_bar.setValue(progress)
+
+    def update_processing_status(self, status):
+        """Update processing status message."""
+        self.processing_status_label.setText(status)
+
+    def on_processing_finished(self, success, message):
+        """Handle processing completion."""
+        self.progress_bar.hide()
+        self.processing_status_label.setText("无正在处理的任务")
+
+        if success:
+            QMessageBox.information(self, "成功", message)
+            # Refresh data after successful processing
+            QTimer.singleShot(1000, self.refresh_data)
+        else:
+            QMessageBox.warning(self, "错误", message)
+
+    def manage_collections(self):
+        """Open collection management dialog."""
+        dialog = CollectionManagementDialog(self)
+        dialog.exec()
+
+        # Refresh data after dialog closes
+        self.refresh_data()
+
+    def search_knowledge(self):
+        """Search knowledge base and show preview."""
+        query = self.search_input.text().strip()
+        if not query:
+            return
+
+        if not KNOWLEDGE_BASE_AVAILABLE:
+            self.search_results.setText("知识库功能不可用")
+            return
+
+        try:
+            self.search_results.setText("搜索中...")
+
+            # Search with selected collections
+            results = ai_services.search_knowledge_preview(
+                query=query,
+                collections=self.selected_collections if self.selected_collections else None,
+                top_k=3
+            )
+
+            if results:
+                result_text = f"找到 {len(results)} 个相关片段:\n\n"
+                for i, result in enumerate(results, 1):
+                    result_text += f"{i}. 来源: {result.get('source_document', '未知')}\n"
+                    result_text += f"   相关度: {result.get('relevance_score', 0):.3f}\n"
+                    result_text += f"   内容: {result.get('content_preview', '无预览')}\n\n"
+            else:
+                result_text = "未找到相关知识片段"
+
+            self.search_results.setText(result_text)
+
+        except Exception as e:
+            self.search_results.setText(f"搜索失败: {e}")
+
+    def closeEvent(self, event):
+        """Handle widget close event."""
+        if self.processing_worker and self.processing_worker.isRunning():
+            self.processing_worker.terminate()
+            self.processing_worker.wait()
+
+        if hasattr(self, 'refresh_timer'):
+            self.refresh_timer.stop()
+
+        event.accept()

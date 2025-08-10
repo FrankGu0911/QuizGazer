@@ -21,3 +21,59 @@ model_name = gemini-2.5-flash
 base_url = https://generativelanguage.googleapis.com/v1beta/openai/
 # The proxy to use for the API request, e.g., "http://127.0.0.1:7890". Leave empty if no proxy is needed.
 proxy =
+
+# Configuration for the Knowledge Base feature
+[knowledge_base]
+# Enable or disable the knowledge base feature
+enabled = true
+# Local storage path for knowledge base data
+storage_path = ./data/knowledge_base
+# Maximum file size for uploads in MB
+max_file_size_mb = 100
+# Chunk size for document splitting
+chunk_size = 1000
+# Chunk overlap for document splitting
+chunk_overlap = 200
+# Maximum number of collections allowed
+max_collections = 50
+# Enable background processing for large documents
+background_processing = true
+# Maximum number of concurrent processing tasks
+max_concurrent_tasks = 3
+
+# Configuration for ChromaDB vector database
+[chromadb]
+# Connection type: local or remote
+connection_type = local
+# Host for remote connections (leave empty for local)
+host = localhost
+# Port for remote connections (leave empty for local)
+port = 8000
+# Path for local storage
+path = ./data/chromadb
+# Authentication token for remote connections (leave empty for local)
+auth_token =
+# Enable SSL for remote connections
+ssl_enabled = false
+
+# Configuration for Embedding API
+[embedding_api]
+# API endpoint for embedding generation
+endpoint = https://api.example.com/v1/embeddings
+# API key for embedding service
+api_key = your_embedding_api_key_here
+# Model name for embeddings
+model = text-embedding-ada-002
+# Request timeout in seconds
+timeout = 30
+
+# Configuration for Reranker API
+[reranker_api]
+# API endpoint for reranking (vllm format with /v1/rerank)
+endpoint = https://api.example.com/v1/rerank
+# API key for reranker service
+api_key = your_reranker_api_key_here
+# Model name for reranking
+model = rerank-multilingual-v2.0
+# Request timeout in seconds
+timeout = 30
