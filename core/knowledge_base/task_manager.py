@@ -38,13 +38,14 @@ class TaskProgressCallback:
 class BackgroundTaskManager:
     """Manages asynchronous document processing tasks with progress tracking."""
     
-    def __init__(self, max_workers: int = 3, cleanup_interval: int = 3600):
+    def __init__(self, max_workers: int = 3, cleanup_interval: int = 3600, vector_store=None):
         """
         Initialize the Background Task Manager.
         
         Args:
             max_workers: Maximum number of concurrent processing tasks
             cleanup_interval: Interval in seconds for automatic cleanup
+            vector_store: Optional vector store manager for storing embeddings
         """
         self.max_workers = max_workers
         self.cleanup_interval = cleanup_interval
@@ -64,6 +65,9 @@ class BackgroundTaskManager:
         
         # Document processor
         self._document_processor = DocumentProcessor()
+        
+        # Vector store for embedding storage
+        self._vector_store = vector_store
         
         # Cleanup thread
         self._cleanup_thread = None
@@ -351,7 +355,52 @@ class BackgroundTaskManager:
             if task_id in self._cancelled_tasks:
                 return []
             
-            self._notify_progress(task_id, 0.8, f"Generated {len(chunks)} chunks")
+            self._notify_progress(task_id, 0.6, f"Generated {len(chunks)} chunks")
+            
+            # Generate embeddings and store in vector database
+            if chunks:
+                try:
+                    self._notify_progress(task_id, 0.7, "Generating embeddings...")
+                    
+                    # Import embedding service
+                    from .embedding_service import get_embedding_service
+                    embedding_service = get_embedding_service()
+                    
+                    if embedding_service:
+                        # Extract text content from chunks
+                        texts = [chunk.content for chunk in chunks]
+                        
+                        # Generate embeddings in batches
+                        embeddings = embedding_service.generate_embeddings_batch(texts)
+                        
+                        # Filter out failed embeddings
+                        valid_chunks = []
+                        valid_embeddings = []
+                        for chunk, embedding in zip(chunks, embeddings):
+                            if embedding is not None:
+                                valid_chunks.append(chunk)
+                                valid_embeddings.append(embedding)
+                        
+                        if valid_embeddings:
+                            self._notify_progress(task_id, 0.8, f"Storing {len(valid_embeddings)} vectors...")
+                            
+                            # Store in vector database
+                            if hasattr(self, '_vector_store') and self._vector_store:
+                                # Use collection_id directly as collection name
+                                collection_name = task.collection_id
+                                self._vector_store.add_documents(collection_name, valid_chunks, valid_embeddings)
+                                
+                                self.logger.info(f"Stored {len(valid_embeddings)} vectors for task {task_id}")
+                            else:
+                                self.logger.warning("Vector store not available, skipping vector storage")
+                        else:
+                            self.logger.warning("No valid embeddings generated, skipping vector storage")
+                    else:
+                        self.logger.warning("Embedding service not available, skipping embedding generation")
+                        
+                except Exception as e:
+                    self.logger.error(f"Failed to generate embeddings for task {task_id}: {e}")
+                    # Continue without embeddings - at least we have the chunks
             
             # Simulate additional processing time for large files
             if is_large_file:
@@ -363,6 +412,10 @@ class BackgroundTaskManager:
                 task.status = ProcessingStatus.COMPLETED
                 task.completed_at = datetime.now()
                 task.progress = 1.0
+            
+            # Store chunk count in task for callback
+            with self._lock:
+                task.chunk_count = len(chunks)
             
             self._notify_progress(task_id, 1.0, f"Processing completed: {len(chunks)} chunks generated")
             self.logger.info(f"Task {task_id} completed successfully with {len(chunks)} chunks")

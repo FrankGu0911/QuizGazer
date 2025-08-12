@@ -46,8 +46,8 @@ class Collection:
             errors['name'] = "Collection name cannot be empty"
         elif len(self.name) > 100:
             errors['name'] = "Collection name cannot exceed 100 characters"
-        elif not re.match(r'^[a-zA-Z0-9_\-\s]+$', self.name):
-            errors['name'] = "Collection name contains invalid characters"
+        elif re.search(r'[<>:"/\\|?*\x00-\x1f]', self.name):
+            errors['name'] = "Collection name contains invalid characters (cannot contain: < > : \" / \\ | ? * or control characters)"
         
         if len(self.description) > 500:
             errors['description'] = "Description cannot exceed 500 characters"
@@ -161,6 +161,7 @@ class ProcessingTask:
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
     error_message: Optional[str]
+    chunk_count: Optional[int] = None
     
     def validate(self) -> Dict[str, str]:
         """Validate processing task data."""

@@ -243,18 +243,58 @@ class RAGPipeline:
             collections_available
         )
         
+        # Add available field for UI compatibility
+        # Available means the knowledge base components are ready to be used
+        # (regardless of whether it's currently enabled or not)
+        status["available"] = (
+            self.knowledge_base_manager is not None
+        )
+        
         return status
     
     def enable_knowledge_base(self):
         """Enable knowledge base functionality."""
         self.enabled = True
         self._fallback_mode = False
-        self.logger.info("Knowledge base enabled")
+        
+        # Save the enabled state to configuration
+        try:
+            from utils.config_manager import save_knowledge_base_config
+            save_knowledge_base_config({"enabled": True})
+            self.logger.info("Knowledge base enabled and configuration saved")
+        except Exception as e:
+            self.logger.warning(f"Failed to save knowledge base configuration: {e}")
+            self.logger.info("Knowledge base enabled (configuration not saved)")
     
     def disable_knowledge_base(self):
         """Disable knowledge base functionality."""
         self.enabled = False
-        self.logger.info("Knowledge base disabled")
+        
+        # Save the disabled state to configuration
+        try:
+            from utils.config_manager import save_knowledge_base_config
+            save_knowledge_base_config({"enabled": False})
+            self.logger.info("Knowledge base disabled and configuration saved")
+        except Exception as e:
+            self.logger.warning(f"Failed to save knowledge base configuration: {e}")
+            self.logger.info("Knowledge base disabled (configuration not saved)")
+    
+    def reload_configuration(self):
+        """Reload configuration from config file."""
+        try:
+            from utils.config_manager import get_knowledge_base_config
+            self.kb_config = get_knowledge_base_config() if get_knowledge_base_config else {}
+            
+            # Update enabled state from config if not explicitly set by user
+            config_enabled = self.kb_config.get('enabled', False)
+            self.logger.info(f"Configuration reloaded: enabled={config_enabled}")
+            
+            # Note: We don't automatically change self.enabled here because
+            # the user might have changed it through the UI
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to reload configuration: {e}")
+            return False
     
     def enable_fallback_mode(self):
         """Enable fallback mode (disable knowledge retrieval temporarily)."""

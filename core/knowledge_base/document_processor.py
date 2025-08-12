@@ -452,11 +452,13 @@ class DocumentProcessor:
                     # Create content combining question, options, and answer
                     content_parts = [f"Question: {row['question']}"]
 
-                    if pd.notna(row['options']) and row['options'].strip():
+                    if 'options' in df.columns and pd.notna(row['options']) and row['options'].strip():
                         content_parts.append(f"Options: {row['options']}")
 
+                    # Use 'answer' column if available, otherwise 'correct_answer'
+                    answer_col = 'answer' if 'answer' in df.columns else 'correct_answer'
                     content_parts.append(
-                        f"Correct Answer: {row['correct_answer']}")
+                        f"Correct Answer: {row[answer_col]}")
 
                     content = "\n".join(content_parts)
 
@@ -494,8 +496,10 @@ class DocumentProcessor:
                         if row.get('options', '').strip():
                             content_parts.append(f"Options: {row['options']}")
 
+                        # Use 'answer' column if available, otherwise 'correct_answer'
+                        answer_value = row.get('answer', row.get('correct_answer', ''))
                         content_parts.append(
-                            f"Correct Answer: {row['correct_answer']}")
+                            f"Correct Answer: {answer_value}")
 
                         content = "\n".join(content_parts)
 
@@ -561,10 +565,15 @@ class DocumentProcessor:
                     result["row_count"] = len(df)
                     result["columns"] = list(df.columns)
 
-                    # Check required columns
-                    required_columns = ['question', 'correct_answer']
-                    missing_columns = [
-                        col for col in required_columns if col not in df.columns]
+                    # Check required columns (support both 'answer' and 'correct_answer')
+                    required_question = 'question' in df.columns
+                    has_answer = 'answer' in df.columns or 'correct_answer' in df.columns
+                    
+                    missing_columns = []
+                    if not required_question:
+                        missing_columns.append('question')
+                    if not has_answer:
+                        missing_columns.append('answer (or correct_answer)')
 
                     if missing_columns:
                         result["errors"].append(
@@ -572,12 +581,17 @@ class DocumentProcessor:
                         return result
 
                     # Check for empty required fields
-                    for col in required_columns:
-                        empty_count = df[col].isna().sum() + \
-                            (df[col] == '').sum()
+                    if 'question' in df.columns:
+                        empty_count = df['question'].isna().sum() + (df['question'] == '').sum()
                         if empty_count > 0:
-                            result["errors"].append(
-                                f"Column '{col}' has {empty_count} empty values")
+                            result["errors"].append(f"Column 'question' has {empty_count} empty values")
+                    
+                    # Check answer column (either 'answer' or 'correct_answer')
+                    answer_col = 'answer' if 'answer' in df.columns else 'correct_answer'
+                    if answer_col in df.columns:
+                        empty_count = df[answer_col].isna().sum() + (df[answer_col] == '').sum()
+                        if empty_count > 0:
+                            result["errors"].append(f"Column '{answer_col}' has {empty_count} empty values")
 
                     # Check optional columns
                     optional_columns = ['options',
@@ -602,10 +616,16 @@ class DocumentProcessor:
                         reader = csv.DictReader(file)
                         result["columns"] = reader.fieldnames or []
 
-                        # Check required columns
-                        required_columns = ['question', 'correct_answer']
-                        missing_columns = [
-                            col for col in required_columns if col not in result["columns"]]
+                        # Check required columns (support both 'answer' and 'correct_answer')
+                        columns = result["columns"]
+                        required_question = 'question' in columns
+                        has_answer = 'answer' in columns or 'correct_answer' in columns
+                        
+                        missing_columns = []
+                        if not required_question:
+                            missing_columns.append('question')
+                        if not has_answer:
+                            missing_columns.append('answer (or correct_answer)')
 
                         if missing_columns:
                             result["errors"].append(
@@ -621,7 +641,9 @@ class DocumentProcessor:
                             row_count += 1
                             if not row.get('question', '').strip():
                                 empty_questions += 1
-                            if not row.get('correct_answer', '').strip():
+                            # Check answer column (either 'answer' or 'correct_answer')
+                            answer_value = row.get('answer', row.get('correct_answer', ''))
+                            if not answer_value.strip():
                                 empty_answers += 1
 
                         result["row_count"] = row_count

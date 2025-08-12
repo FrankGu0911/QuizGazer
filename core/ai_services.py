@@ -40,9 +40,9 @@ def initialize_knowledge_base():
         kb_config = get_knowledge_base_config() if get_knowledge_base_config else {}
         chromadb_config_dict = get_chromadb_config() if get_chromadb_config else {}
         
-        if not kb_config.get('enabled', False):
-            logging.info("Knowledge base is disabled in configuration")
-            return False
+        # Note: We initialize the knowledge base components even if disabled in config
+        # This allows users to enable it through the UI later
+        # The enabled state will be handled by the RAG pipeline itself
         
         # Create ChromaDB configuration
         chromadb_config = ChromaDBConfig(
@@ -60,6 +60,12 @@ def initialize_knowledge_base():
             storage_path=storage_path,
             chromadb_config=chromadb_config
         )
+        
+        # Initialize embedding service
+        from core.knowledge_base.embedding_service import initialize_embedding_service
+        embedding_initialized = initialize_embedding_service()
+        if not embedding_initialized:
+            logging.warning("Embedding service initialization failed, but continuing...")
         
         # Initialize RAG pipeline with LLM service integration
         _rag_pipeline = RAGPipeline(

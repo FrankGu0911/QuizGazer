@@ -190,7 +190,8 @@ def get_chromadb_config() -> Optional[Dict[str, Any]]:
     
     connection_type = config.get('chromadb', 'connection_type', fallback='local')
     host = config.get('chromadb', 'host', fallback=None)
-    port = config.getint('chromadb', 'port', fallback=None) if config.get('chromadb', 'port', fallback='') else None
+    port_str = config.get('chromadb', 'port', fallback='')
+    port = config.getint('chromadb', 'port', fallback=8000) if port_str else 8000
     path = config.get('chromadb', 'path', fallback='./data/chromadb')
     auth_token = config.get('chromadb', 'auth_token', fallback=None)
     ssl_enabled = config.getboolean('chromadb', 'ssl_enabled', fallback=False)
@@ -301,7 +302,11 @@ def save_knowledge_base_config(config_data: Dict[str, Any]):
     
     # Update knowledge base settings
     for key, value in config_data.items():
-        config.set('knowledge_base', key, str(value))
+        # Convert boolean values to lowercase strings for INI format
+        if isinstance(value, bool):
+            config.set('knowledge_base', key, str(value).lower())
+        else:
+            config.set('knowledge_base', key, str(value))
     
     # Write to file
     with open(config_path, 'w') as configfile:

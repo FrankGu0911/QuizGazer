@@ -37,7 +37,8 @@ class DocumentUploadDialog(QDialog):
     def __init__(self, collections: List = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("上传文档")
-        self.setMinimumSize(400, 300)
+        self.setMinimumSize(550, 450)
+        self.resize(650, 500)
         self.collections = collections or []
         self.selected_files = []
 
@@ -57,7 +58,8 @@ class DocumentUploadDialog(QDialog):
         file_button_layout.addStretch()
 
         self.files_list = QListWidget()
-        self.files_list.setMaximumHeight(100)
+        self.files_list.setMinimumHeight(120)
+        self.files_list.setMaximumHeight(150)
 
         file_layout.addLayout(file_button_layout)
         file_layout.addWidget(self.files_list)
@@ -94,8 +96,11 @@ class DocumentUploadDialog(QDialog):
         new_collection_layout = QFormLayout(self.new_collection_widget)
 
         self.collection_name_input = QLineEdit()
+        self.collection_name_input.setMinimumHeight(30)
+        
         self.collection_description_input = QTextEdit()
-        self.collection_description_input.setMaximumHeight(60)
+        self.collection_description_input.setMinimumHeight(80)
+        self.collection_description_input.setMaximumHeight(120)
 
         new_collection_layout.addRow("集合名称:", self.collection_name_input)
         new_collection_layout.addRow("描述:", self.collection_description_input)
@@ -196,7 +201,8 @@ class CreateCollectionDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("创建新集合")
-        self.setMinimumSize(400, 200)
+        self.setMinimumSize(500, 350)
+        self.resize(600, 400)
 
         self.setup_ui()
 
@@ -210,7 +216,8 @@ class CreateCollectionDialog(QDialog):
         self.name_input.setPlaceholderText("输入集合名称...")
 
         self.description_input = QTextEdit()
-        self.description_input.setMaximumHeight(80)
+        self.description_input.setMinimumHeight(120)
+        self.description_input.setMaximumHeight(200)
         self.description_input.setPlaceholderText("输入集合描述（可选）...")
 
         form_layout.addRow("名称*:", self.name_input)
@@ -257,6 +264,9 @@ class CollectionDetailsDialog(QDialog):
 
         self.setWindowTitle("集合详情")
         self.setMinimumSize(700, 500)
+        
+        # Detect theme
+        self.is_dark_mode = self.detect_dark_mode()
 
         self.setup_ui()
         self.load_collection_data()
@@ -356,6 +366,131 @@ class CollectionDetailsDialog(QDialog):
 
         except Exception as e:
             QMessageBox.warning(self, "错误", f"加载集合数据失败: {e}")
+    
+    def detect_dark_mode(self):
+        """Detect if the system is using dark mode."""
+        try:
+            import sys
+            if sys.platform == 'win32':
+                import winreg
+                try:
+                    registry = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+                    key = winreg.OpenKey(registry, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+                    value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+                    winreg.CloseKey(key)
+                    return value == 0  # 0 means dark mode, 1 means light mode
+                except:
+                    pass
+
+            # Fallback: check Qt palette
+            from PySide6.QtWidgets import QApplication
+            palette = QApplication.palette()
+            window_color = palette.color(palette.Window)
+            return window_color.lightness() < 128
+        except:
+            return False  # Default to light mode if detection fails
+    
+    def get_button_style(self, button_type="default"):
+        """Get button style based on current theme and button type."""
+        is_dark = self.is_dark_mode
+        
+        if button_type == "danger":  # 删除按钮
+            if is_dark:
+                return """
+                QPushButton {
+                    background-color: #8B0000;
+                    color: #FFFFFF;
+                    border: 1px solid #A52A2A;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #A52A2A;
+                }
+                QPushButton:pressed {
+                    background-color: #660000;
+                }
+                """
+            else:
+                return """
+                QPushButton {
+                    background-color: #ffcccc;
+                    color: #8B0000;
+                    border: 1px solid #ffaaaa;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #ffaaaa;
+                }
+                QPushButton:pressed {
+                    background-color: #ff9999;
+                }
+                """
+        elif button_type == "info":  # 预览按钮
+            if is_dark:
+                return """
+                QPushButton {
+                    background-color: #1E3A8A;
+                    color: #FFFFFF;
+                    border: 1px solid #3B82F6;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #3B82F6;
+                }
+                QPushButton:pressed {
+                    background-color: #1E40AF;
+                }
+                """
+            else:
+                return """
+                QPushButton {
+                    background-color: #cceeff;
+                    color: #1E3A8A;
+                    border: 1px solid #aaddff;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #aaddff;
+                }
+                QPushButton:pressed {
+                    background-color: #99ccff;
+                }
+                """
+        else:  # 默认按钮
+            if is_dark:
+                return """
+                QPushButton {
+                    background-color: #404040;
+                    color: #FFFFFF;
+                    border: 1px solid #606060;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #505050;
+                }
+                QPushButton:pressed {
+                    background-color: #303030;
+                }
+                """
+            else:
+                return """
+                QPushButton {
+                    background-color: #f0f0f0;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #e0e0e0;
+                }
+                QPushButton:pressed {
+                    background-color: #d0d0d0;
+                }
+                """
 
     def update_documents_table(self, documents):
         """Update the documents table."""
@@ -400,14 +535,256 @@ class CollectionDetailsDialog(QDialog):
 
             remove_button = QPushButton("移除")
             remove_button.setMaximumSize(50, 25)
-            remove_button.setStyleSheet(
-                "QPushButton { background-color: #ffcccc; }")
-            # remove_button.clicked.connect(lambda checked, doc_id=doc.get('id'): self.remove_document(doc_id))
+            remove_button.setStyleSheet(self.get_button_style("danger"))
+            remove_button.clicked.connect(lambda checked, doc_id=doc.get('id'): self.remove_document(doc_id))
 
+            # Add preview button
+            preview_button = QPushButton("预览")
+            preview_button.setMaximumSize(50, 25)
+            preview_button.setStyleSheet(self.get_button_style("info"))
+            preview_button.clicked.connect(lambda checked, doc_id=doc.get('id'): self.preview_document(doc_id))
+
+            actions_layout.addWidget(preview_button)
             actions_layout.addWidget(remove_button)
             actions_layout.addStretch()
 
             self.documents_table.setCellWidget(row, 4, actions_widget)
+    
+    def remove_document(self, document_id: str):
+        """Remove a document from the collection."""
+        if not document_id:
+            return
+        
+        reply = QMessageBox.question(
+            self, "确认删除", 
+            "确定要删除这个文档吗？此操作不可撤销。",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
+                kb_manager = ai_services.get_knowledge_base_manager()
+                if kb_manager:
+                    success = kb_manager.delete_document(document_id)
+                    if success:
+                        QMessageBox.information(self, "成功", "文档已删除")
+                        self.load_collection_data()  # Refresh the data
+                    else:
+                        QMessageBox.warning(self, "错误", "删除文档失败")
+                else:
+                    QMessageBox.warning(self, "错误", "知识库管理器不可用")
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"删除文档时出错: {e}")
+    
+    def preview_document(self, document_id: str):
+        """Preview document chunks."""
+        if not document_id:
+            return
+        
+        try:
+            kb_manager = ai_services.get_knowledge_base_manager()
+            if kb_manager:
+                chunks = kb_manager.get_document_chunks(document_id)
+                if chunks:
+                    dialog = DocumentPreviewDialog(document_id, chunks, self)
+                    dialog.exec()
+                else:
+                    QMessageBox.information(self, "信息", "该文档没有可预览的内容")
+            else:
+                QMessageBox.warning(self, "错误", "知识库管理器不可用")
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"预览文档时出错: {e}")
+    
+    def detect_dark_mode(self):
+        """Detect if the system is using dark mode."""
+        try:
+            import sys
+            if sys.platform == 'win32':
+                import winreg
+                try:
+                    registry = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+                    key = winreg.OpenKey(registry, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+                    value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+                    winreg.CloseKey(key)
+                    return value == 0  # 0 means dark mode, 1 means light mode
+                except:
+                    pass
+
+            # Fallback: check Qt palette
+            from PySide6.QtWidgets import QApplication
+            palette = QApplication.palette()
+            window_color = palette.color(palette.Window)
+            return window_color.lightness() < 128
+        except:
+            return False  # Default to light mode if detection fails
+    
+    def get_button_style(self, button_type="default"):
+        """Get button style based on current theme and button type."""
+        is_dark = self.is_dark_mode
+        
+        if button_type == "danger":  # 删除按钮
+            if is_dark:
+                return """
+                QPushButton {
+                    background-color: #8B0000;
+                    color: #FFFFFF;
+                    border: 1px solid #A52A2A;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #A52A2A;
+                }
+                QPushButton:pressed {
+                    background-color: #660000;
+                }
+                """
+            else:
+                return """
+                QPushButton {
+                    background-color: #ffcccc;
+                    color: #8B0000;
+                    border: 1px solid #ffaaaa;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #ffaaaa;
+                }
+                QPushButton:pressed {
+                    background-color: #ff9999;
+                }
+                """
+        elif button_type == "info":  # 预览按钮
+            if is_dark:
+                return """
+                QPushButton {
+                    background-color: #1E3A8A;
+                    color: #FFFFFF;
+                    border: 1px solid #3B82F6;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #3B82F6;
+                }
+                QPushButton:pressed {
+                    background-color: #1E40AF;
+                }
+                """
+            else:
+                return """
+                QPushButton {
+                    background-color: #cceeff;
+                    color: #1E3A8A;
+                    border: 1px solid #aaddff;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #aaddff;
+                }
+                QPushButton:pressed {
+                    background-color: #99ccff;
+                }
+                """
+        else:  # 默认按钮
+            if is_dark:
+                return """
+                QPushButton {
+                    background-color: #404040;
+                    color: #FFFFFF;
+                    border: 1px solid #606060;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #505050;
+                }
+                QPushButton:pressed {
+                    background-color: #303030;
+                }
+                """
+            else:
+                return """
+                QPushButton {
+                    background-color: #f0f0f0;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #e0e0e0;
+                }
+                QPushButton:pressed {
+                    background-color: #d0d0d0;
+                }
+                """
+
+
+class DocumentPreviewDialog(QDialog):
+    """Dialog for previewing document chunks."""
+    
+    def __init__(self, document_id: str, chunks: list, parent=None):
+        super().__init__(parent)
+        self.document_id = document_id
+        self.chunks = chunks
+        
+        self.setWindowTitle("文档预览")
+        self.setMinimumSize(800, 600)
+        
+        self.setup_ui()
+    
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Header info
+        info_label = QLabel(f"文档ID: {self.document_id} | 共 {len(self.chunks)} 个片段")
+        info_label.setStyleSheet("font-weight: bold; padding: 10px;")
+        layout.addWidget(info_label)
+        
+        # Chunks list
+        self.chunks_list = QListWidget()
+        
+        for i, chunk in enumerate(self.chunks):
+            item_widget = QWidget()
+            item_layout = QVBoxLayout(item_widget)
+            
+            # Chunk header
+            header_label = QLabel(f"片段 {i+1}")
+            header_label.setStyleSheet("font-weight: bold; color: #0066cc;")
+            
+            # Chunk content
+            content_text = QTextEdit()
+            content_text.setPlainText(chunk.get('content', '无内容'))
+            content_text.setMaximumHeight(150)
+            content_text.setReadOnly(True)
+            
+            # Metadata
+            metadata = chunk.get('metadata', {})
+            metadata_text = f"索引: {metadata.get('chunk_index', 'N/A')} | 来源: {metadata.get('source_file', 'N/A')}"
+            metadata_label = QLabel(metadata_text)
+            metadata_label.setStyleSheet("color: #666666; font-size: 10px;")
+            
+            item_layout.addWidget(header_label)
+            item_layout.addWidget(content_text)
+            item_layout.addWidget(metadata_label)
+            
+            # Add to list
+            list_item = QListWidgetItem()
+            list_item.setSizeHint(item_widget.sizeHint())
+            self.chunks_list.addItem(list_item)
+            self.chunks_list.setItemWidget(list_item, item_widget)
+        
+        layout.addWidget(self.chunks_list)
+        
+        # Close button
+        button_layout = QHBoxLayout()
+        close_button = QPushButton("关闭")
+        close_button.clicked.connect(self.accept)
+        button_layout.addStretch()
+        button_layout.addWidget(close_button)
+        
+        layout.addLayout(button_layout)
 
 
 class CollectionManagementDialog(QDialog):
@@ -418,6 +795,9 @@ class CollectionManagementDialog(QDialog):
         self.setWindowTitle("集合管理")
         self.setMinimumSize(600, 400)
         self.collections = []
+        
+        # Detect theme
+        self.is_dark_mode = self.detect_dark_mode()
 
         self.setup_ui()
         self.refresh_collections()
@@ -515,8 +895,7 @@ class CollectionManagementDialog(QDialog):
             # Delete button
             delete_button = QPushButton("删除")
             delete_button.setMaximumSize(40, 25)
-            delete_button.setStyleSheet(
-                "QPushButton { background-color: #ffcccc; }")
+            delete_button.setStyleSheet(self.get_button_style("danger"))
             delete_button.clicked.connect(
                 lambda checked, cid=collection.id: self.delete_collection(cid))
 
@@ -713,6 +1092,131 @@ class CollectionManagementDialog(QDialog):
         """View detailed information about a collection."""
         dialog = CollectionDetailsDialog(collection_id, self)
         dialog.exec()
+    
+    def detect_dark_mode(self):
+        """Detect if the system is using dark mode."""
+        try:
+            import sys
+            if sys.platform == 'win32':
+                import winreg
+                try:
+                    registry = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+                    key = winreg.OpenKey(registry, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+                    value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+                    winreg.CloseKey(key)
+                    return value == 0  # 0 means dark mode, 1 means light mode
+                except:
+                    pass
+
+            # Fallback: check Qt palette
+            from PySide6.QtWidgets import QApplication
+            palette = QApplication.palette()
+            window_color = palette.color(palette.Window)
+            return window_color.lightness() < 128
+        except:
+            return False  # Default to light mode if detection fails
+    
+    def get_button_style(self, button_type="default"):
+        """Get button style based on current theme and button type."""
+        is_dark = self.is_dark_mode
+        
+        if button_type == "danger":  # 删除按钮
+            if is_dark:
+                return """
+                QPushButton {
+                    background-color: #8B0000;
+                    color: #FFFFFF;
+                    border: 1px solid #A52A2A;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #A52A2A;
+                }
+                QPushButton:pressed {
+                    background-color: #660000;
+                }
+                """
+            else:
+                return """
+                QPushButton {
+                    background-color: #ffcccc;
+                    color: #8B0000;
+                    border: 1px solid #ffaaaa;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #ffaaaa;
+                }
+                QPushButton:pressed {
+                    background-color: #ff9999;
+                }
+                """
+        elif button_type == "info":  # 预览按钮
+            if is_dark:
+                return """
+                QPushButton {
+                    background-color: #1E3A8A;
+                    color: #FFFFFF;
+                    border: 1px solid #3B82F6;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #3B82F6;
+                }
+                QPushButton:pressed {
+                    background-color: #1E40AF;
+                }
+                """
+            else:
+                return """
+                QPushButton {
+                    background-color: #cceeff;
+                    color: #1E3A8A;
+                    border: 1px solid #aaddff;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #aaddff;
+                }
+                QPushButton:pressed {
+                    background-color: #99ccff;
+                }
+                """
+        else:  # 默认按钮
+            if is_dark:
+                return """
+                QPushButton {
+                    background-color: #404040;
+                    color: #FFFFFF;
+                    border: 1px solid #606060;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #505050;
+                }
+                QPushButton:pressed {
+                    background-color: #303030;
+                }
+                """
+            else:
+                return """
+                QPushButton {
+                    background-color: #f0f0f0;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #e0e0e0;
+                }
+                QPushButton:pressed {
+                    background-color: #d0d0d0;
+                }
+                """
 
 
 class DocumentProcessingWorker(QThread):
@@ -791,7 +1295,13 @@ class DocumentProcessingWorker(QThread):
                     if final_status and final_status.status.value == "completed":
                         successful_uploads += 1
                     else:
-                        failed_uploads.append(f"{filename}: 处理超时或失败")
+                        # Get specific error message if available
+                        error_msg = "处理超时或失败"
+                        if final_status and final_status.error_message:
+                            error_msg = final_status.error_message
+                        elif final_status:
+                            error_msg = f"处理状态: {final_status.status.value}"
+                        failed_uploads.append(f"{filename}: {error_msg}")
 
                 except Exception as e:
                     failed_uploads.append(f"{filename}: {str(e)}")
@@ -866,6 +1376,108 @@ class KnowledgeBasePanel(QWidget):
             return window_color.lightness() < 128
         except:
             return False  # Default to light mode if detection fails
+
+    def get_button_style(self, button_type="default"):
+        """Get button style based on current theme and button type."""
+        is_dark = self.is_dark_mode
+        
+        if button_type == "danger":  # 删除按钮
+            if is_dark:
+                return """
+                QPushButton {
+                    background-color: #8B0000;
+                    color: #FFFFFF;
+                    border: 1px solid #A52A2A;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #A52A2A;
+                }
+                QPushButton:pressed {
+                    background-color: #660000;
+                }
+                """
+            else:
+                return """
+                QPushButton {
+                    background-color: #ffcccc;
+                    color: #8B0000;
+                    border: 1px solid #ffaaaa;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #ffaaaa;
+                }
+                QPushButton:pressed {
+                    background-color: #ff9999;
+                }
+                """
+        elif button_type == "info":  # 预览按钮
+            if is_dark:
+                return """
+                QPushButton {
+                    background-color: #1E3A8A;
+                    color: #FFFFFF;
+                    border: 1px solid #3B82F6;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #3B82F6;
+                }
+                QPushButton:pressed {
+                    background-color: #1E40AF;
+                }
+                """
+            else:
+                return """
+                QPushButton {
+                    background-color: #cceeff;
+                    color: #1E3A8A;
+                    border: 1px solid #aaddff;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #aaddff;
+                }
+                QPushButton:pressed {
+                    background-color: #99ccff;
+                }
+                """
+        else:  # 默认按钮
+            if is_dark:
+                return """
+                QPushButton {
+                    background-color: #404040;
+                    color: #FFFFFF;
+                    border: 1px solid #606060;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #505050;
+                }
+                QPushButton:pressed {
+                    background-color: #303030;
+                }
+                """
+            else:
+                return """
+                QPushButton {
+                    background-color: #f0f0f0;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #e0e0e0;
+                }
+                QPushButton:pressed {
+                    background-color: #d0d0d0;
+                }
+                """
 
     def setup_theme_styles(self):
         """Setup theme-aware styles."""
@@ -962,7 +1574,7 @@ class KnowledgeBasePanel(QWidget):
 
         self.enable_checkbox = QCheckBox("启用知识库")
         self.enable_checkbox.setStyleSheet(f"color: {self.text_color};")
-        self.enable_checkbox.stateChanged.connect(self.toggle_knowledge_base)
+        self.enable_checkbox.stateChanged.connect(self.safe_toggle_knowledge_base)
 
         status_layout.addWidget(self.status_label)
         status_layout.addWidget(self.enable_checkbox)
@@ -1059,9 +1671,8 @@ class KnowledgeBasePanel(QWidget):
             return
 
         try:
-            # Get knowledge base status
-            status = ai_services.get_knowledge_base_status()
-            self.update_status_display(status)
+            # Simple refresh - just update UI to match backend
+            self.refresh_ui_state()
 
             # Get collections
             self.collections = ai_services.get_knowledge_base_collections()
@@ -1069,6 +1680,7 @@ class KnowledgeBasePanel(QWidget):
 
         except Exception as e:
             self.status_label.setText(f"获取状态失败: {e}")
+            self.set_enabled_state(False)
 
     def update_status_display(self, status: dict):
         """Update the status display."""
@@ -1088,13 +1700,8 @@ class KnowledgeBasePanel(QWidget):
         status_text += f"可查询: {'是' if can_process else '否'}"
 
         self.status_label.setText(status_text)
+    
 
-        # Update checkbox without triggering signal
-        self.enable_checkbox.blockSignals(True)
-        self.enable_checkbox.setChecked(enabled)
-        self.enable_checkbox.blockSignals(False)
-
-        self.set_enabled_state(enabled and available)
 
     def update_collections_list(self):
         """Update the collections list widget."""
@@ -1116,26 +1723,87 @@ class KnowledgeBasePanel(QWidget):
         self.search_button.setEnabled(enabled)
         self.search_input.setEnabled(enabled)
 
+    def safe_toggle_knowledge_base(self, state):
+        """Safe toggle with recursion protection."""
+        # Prevent recursion during UI updates
+        if hasattr(self, '_updating_checkbox') and self._updating_checkbox:
+            return
+        
+        self.toggle_knowledge_base(state)
+    
     def toggle_knowledge_base(self, state):
         """Toggle knowledge base enabled state."""
         if not KNOWLEDGE_BASE_AVAILABLE:
             return
 
+        # Get intended state
+        intended_enabled = (state == Qt.Checked)
+        
+        # Perform the operation
         try:
-            if state == Qt.Checked:
-                ai_services.enable_knowledge_base()
+            if intended_enabled:
+                result = ai_services.enable_knowledge_base()
             else:
-                ai_services.disable_knowledge_base()
-
-            # Refresh status after a short delay
-            QTimer.singleShot(500, self.refresh_data)
-
+                result = ai_services.disable_knowledge_base()
+            
+            if not result:
+                print(f"Knowledge base toggle operation failed")
+                
         except Exception as e:
-            QMessageBox.warning(self, "错误", f"切换知识库状态失败: {e}")
-            # Revert checkbox state
-            self.enable_checkbox.blockSignals(True)
-            self.enable_checkbox.setChecked(not (state == Qt.Checked))
-            self.enable_checkbox.blockSignals(False)
+            print(f"Knowledge base toggle error: {e}")
+        
+        # Always refresh UI to match actual backend state
+        # This ensures UI is always consistent regardless of what happened
+        self.simple_refresh_ui()
+    
+    def simple_refresh_ui(self):
+        """Simple UI refresh to match backend state."""
+        try:
+            # Get current backend state
+            status = ai_services.get_knowledge_base_status()
+            enabled = status.get('enabled', False)
+            available = status.get('available', False)
+            
+            # Update checkbox - use a flag to prevent recursion
+            if not hasattr(self, '_updating_checkbox'):
+                self._updating_checkbox = True
+                self.enable_checkbox.setChecked(enabled)
+                self._updating_checkbox = False
+            
+            # Update buttons
+            buttons_enabled = enabled and available
+            self.upload_button.setEnabled(buttons_enabled)
+            self.manage_collections_button.setEnabled(buttons_enabled)
+            self.collections_list.setEnabled(buttons_enabled)
+            self.search_button.setEnabled(buttons_enabled)
+            self.search_input.setEnabled(buttons_enabled)
+            
+            # Update status text
+            total_collections = status.get('total_collections', 0)
+            total_documents = status.get('total_documents', 0)
+            can_process = status.get('can_process_queries', False)
+            
+            status_text = f"可用: {'是' if available else '否'} | "
+            status_text += f"集合: {total_collections} | "
+            status_text += f"文档: {total_documents} | "
+            status_text += f"可查询: {'是' if can_process else '否'}"
+            
+            self.status_label.setText(status_text)
+            
+        except Exception as e:
+            print(f"Failed to refresh UI: {e}")
+            # Safe fallback
+            self.enable_checkbox.setChecked(False)
+            self.upload_button.setEnabled(False)
+            self.manage_collections_button.setEnabled(False)
+            self.collections_list.setEnabled(False)
+            self.search_button.setEnabled(False)
+            self.search_input.setEnabled(False)
+            self.status_label.setText("状态更新失败")
+    
+    def refresh_ui_state(self):
+        """Refresh UI state to match backend (for compatibility)."""
+        self.simple_refresh_ui()
 
     def on_collection_selection_changed(self, item):
         """Handle collection selection change."""
@@ -1244,6 +1912,16 @@ class KnowledgeBasePanel(QWidget):
         """Search knowledge base and show preview."""
         query = self.search_input.text().strip()
         if not query:
+            return
+
+        # Show warning about API costs
+        reply = QMessageBox.question(
+            self, "确认搜索", 
+            f"搜索将调用Embedding和Rerank API，可能产生费用。\n\n查询: {query[:50]}{'...' if len(query) > 50 else ''}\n\n确定要继续吗？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
             return
 
         if not KNOWLEDGE_BASE_AVAILABLE:

@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QLineEdit, QTextEdit, QPushButton, QLabel, QCheckBox, QComboBox,
     QSpinBox, QTabWidget, QWidget, QMessageBox, QProgressBar,
-    QFrame, QScrollArea, QDialogButtonBox
+    QFrame, QScrollArea, QDialogButtonBox, QFileDialog
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QFont, QPixmap
@@ -146,10 +146,16 @@ class APIConnectionTester(QThread):
             
             if connection_type == 'local':
                 path = self.config.get('path', './data/chromadb')
-                if os.path.exists(path) or os.path.exists(os.path.dirname(path)):
-                    return True, f"Local ChromaDB path accessible: {path}"
+                
+                # Try to create the directory if it doesn't exist
+                if not os.path.exists(path):
+                    try:
+                        os.makedirs(path, exist_ok=True)
+                        return True, f"Local ChromaDB path created and accessible: {path}"
+                    except Exception as e:
+                        return False, f"Cannot create ChromaDB path {path}: {str(e)}"
                 else:
-                    return False, f"Local ChromaDB path not accessible: {path}"
+                    return True, f"Local ChromaDB path accessible: {path}"
             else:
                 # Test remote connection
                 host = self.config.get('host', 'localhost')
@@ -260,8 +266,14 @@ class KnowledgeBaseSettingsDialog(QDialog):
         settings_group = QGroupBox("基本设置")
         settings_layout = QFormLayout(settings_group)
         
+        # Storage path with browse button
+        storage_path_layout = QHBoxLayout()
         self.storage_path_input = QLineEdit()
         self.storage_path_input.setPlaceholderText("./data/knowledge_base")
+        self.storage_path_browse_button = QPushButton("浏览...")
+        self.storage_path_browse_button.clicked.connect(self.browse_storage_path)
+        storage_path_layout.addWidget(self.storage_path_input)
+        storage_path_layout.addWidget(self.storage_path_browse_button)
         
         self.max_file_size_input = QSpinBox()
         self.max_file_size_input.setRange(1, 1000)
@@ -280,7 +292,7 @@ class KnowledgeBaseSettingsDialog(QDialog):
         self.max_collections_input.setRange(1, 200)
         self.max_collections_input.setValue(50)
         
-        settings_layout.addRow("存储路径:", self.storage_path_input)
+        settings_layout.addRow("存储路径:", storage_path_layout)
         settings_layout.addRow("最大文件大小:", self.max_file_size_input)
         settings_layout.addRow("文档块大小:", self.chunk_size_input)
         settings_layout.addRow("块重叠大小:", self.chunk_overlap_input)
@@ -312,10 +324,16 @@ class KnowledgeBaseSettingsDialog(QDialog):
         self.local_settings_group = QGroupBox("本地设置")
         local_layout = QFormLayout(self.local_settings_group)
         
+        # ChromaDB path with browse button
+        chromadb_path_layout = QHBoxLayout()
         self.chromadb_path_input = QLineEdit()
         self.chromadb_path_input.setPlaceholderText("./data/chromadb")
+        self.chromadb_path_browse_button = QPushButton("浏览...")
+        self.chromadb_path_browse_button.clicked.connect(self.browse_chromadb_path)
+        chromadb_path_layout.addWidget(self.chromadb_path_input)
+        chromadb_path_layout.addWidget(self.chromadb_path_browse_button)
         
-        local_layout.addRow("存储路径:", self.chromadb_path_input)
+        local_layout.addRow("存储路径:", chromadb_path_layout)
         
         # Remote settings
         self.remote_settings_group = QGroupBox("远程设置")
@@ -499,11 +517,20 @@ Reranker API用于对搜索结果进行重新排序，提高搜索结果的相�
             
             # General settings
             self.enable_kb_checkbox.setChecked(self.kb_config.get('enabled', False))
-            self.storage_path_input.setText(self.kb_config.get('storage_path', './data/knowledge_base'))
-            self.max_file_size_input.setValue(self.kb_config.get('max_file_size_mb', 100))
-            self.chunk_size_input.setValue(self.kb_config.get('chunk_size', 1000))
-            self.chunk_overlap_input.setValue(self.kb_config.get('chunk_overlap', 200))
-            self.max_collections_input.setValue(self.kb_config.get('max_collections', 50))
+            self.storage_path_input.setText(self.kb_config.get('storage_path', './data/knowledge_base') or './data/knowledge_base')
+            
+            # Ensure all SpinBox values are integers, not None
+            max_file_size = self.kb_config.get('max_file_size_mb', 100)
+            self.max_file_size_input.setValue(max_file_size if max_file_size is not None else 100)
+            
+            chunk_size = self.kb_config.get('chunk_size', 1000)
+            self.chunk_size_input.setValue(chunk_size if chunk_size is not None else 1000)
+            
+            chunk_overlap = self.kb_config.get('chunk_overlap', 200)
+            self.chunk_overlap_input.setValue(chunk_overlap if chunk_overlap is not None else 200)
+            
+            max_collections = self.kb_config.get('max_collections', 50)
+            self.max_collections_input.setValue(max_collections if max_collections is not None else 50)
             
             # ChromaDB config
             self.chromadb_config = get_chromadb_config() or {}
@@ -518,24 +545,29 @@ Reranker API用于对搜索结果进行重新排序，提高搜索结果的相�
             self.chromadb_path_input.setText(self.chromadb_config.get('path', './data/chromadb'))
             
             # Remote settings
-            self.chromadb_host_input.setText(self.chromadb_config.get('host', 'localhost'))
-            self.chromadb_port_input.setValue(self.chromadb_config.get('port', 8000))
-            self.chromadb_auth_input.setText(self.chromadb_config.get('auth_token', ''))
+            self.chromadb_host_input.setText(self.chromadb_config.get('host', 'localhost') or 'localhost')
+            port_value = self.chromadb_config.get('port', 8000)
+            self.chromadb_port_input.setValue(port_value if port_value is not None else 8000)
+            self.chromadb_auth_input.setText(self.chromadb_config.get('auth_token', '') or '')
             self.chromadb_ssl_checkbox.setChecked(self.chromadb_config.get('ssl_enabled', False))
             
             # Embedding config
             self.embedding_config = get_embedding_api_config() or {}
-            self.embedding_endpoint_input.setText(self.embedding_config.get('endpoint', ''))
-            self.embedding_api_key_input.setText(self.embedding_config.get('api_key', ''))
-            self.embedding_model_input.setText(self.embedding_config.get('model', ''))
-            self.embedding_timeout_input.setValue(self.embedding_config.get('timeout', 30))
+            self.embedding_endpoint_input.setText(self.embedding_config.get('endpoint', '') or '')
+            self.embedding_api_key_input.setText(self.embedding_config.get('api_key', '') or '')
+            self.embedding_model_input.setText(self.embedding_config.get('model', '') or '')
+            
+            embedding_timeout = self.embedding_config.get('timeout', 30)
+            self.embedding_timeout_input.setValue(embedding_timeout if embedding_timeout is not None else 30)
             
             # Reranker config
             self.reranker_config = get_reranker_api_config() or {}
-            self.reranker_endpoint_input.setText(self.reranker_config.get('endpoint', ''))
-            self.reranker_api_key_input.setText(self.reranker_config.get('api_key', ''))
-            self.reranker_model_input.setText(self.reranker_config.get('model', ''))
-            self.reranker_timeout_input.setValue(self.reranker_config.get('timeout', 30))
+            self.reranker_endpoint_input.setText(self.reranker_config.get('endpoint', '') or '')
+            self.reranker_api_key_input.setText(self.reranker_config.get('api_key', '') or '')
+            self.reranker_model_input.setText(self.reranker_config.get('model', '') or '')
+            
+            reranker_timeout = self.reranker_config.get('timeout', 30)
+            self.reranker_timeout_input.setValue(reranker_timeout if reranker_timeout is not None else 30)
             
             # Update UI state
             self.on_connection_type_changed()
@@ -625,6 +657,16 @@ Reranker API用于对搜索结果进行重新排序，提高搜索结果的相�
     
     def test_all_connections(self):
         """Test all API connections."""
+        # Show warning about API costs
+        reply = QMessageBox.question(
+            self, "确认测试", 
+            "测试所有连接将调用Embedding和Rerank API，可能产生费用。\n\n确定要继续吗？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
         apis = ["chromadb", "embedding", "reranker"]
         
         for api_type in apis:
@@ -692,6 +734,10 @@ Reranker API用于对搜索结果进行重新排序，提高搜索结果的相�
             return
         
         try:
+            # Create necessary directories before saving
+            if not self.create_required_directories():
+                return
+            
             # Save knowledge base config
             kb_config = {
                 'enabled': self.enable_kb_checkbox.isChecked(),
@@ -720,11 +766,97 @@ Reranker API用于对搜索结果进行重新排序，提高搜索结果的相�
             if reranker_config:
                 save_reranker_api_config(reranker_config)
             
-            QMessageBox.information(self, "成功", "设置已保存。重启应用程序以使设置生效。")
+            QMessageBox.information(self, "成功", "设置已保存并立即生效。")
             self.accept()
             
         except Exception as e:
             QMessageBox.warning(self, "错误", f"保存设置失败: {e}")
+    
+    def create_required_directories(self):
+        """Create required directories for local storage."""
+        try:
+            directories_to_create = []
+            
+            # Knowledge base storage path
+            if self.enable_kb_checkbox.isChecked():
+                storage_path = self.storage_path_input.text().strip()
+                if storage_path:
+                    directories_to_create.append(("知识库存储", storage_path))
+            
+            # ChromaDB local path (if using local connection)
+            connection_type = self.connection_type_combo.currentData()
+            if connection_type == "local":
+                chromadb_path = self.chromadb_path_input.text().strip()
+                if chromadb_path:
+                    directories_to_create.append(("ChromaDB存储", chromadb_path))
+            
+            # Create directories
+            created_dirs = []
+            for dir_name, dir_path in directories_to_create:
+                if not os.path.exists(dir_path):
+                    try:
+                        os.makedirs(dir_path, exist_ok=True)
+                        created_dirs.append(f"• {dir_name}: {dir_path}")
+                        print(f"Created directory: {dir_path}")
+                    except Exception as e:
+                        QMessageBox.warning(
+                            self, "目录创建失败", 
+                            f"无法创建{dir_name}目录: {dir_path}\n错误: {e}"
+                        )
+                        return False
+            
+            # Show created directories info
+            if created_dirs:
+                QMessageBox.information(
+                    self, "目录已创建", 
+                    f"已自动创建以下目录:\n\n" + "\n".join(created_dirs)
+                )
+            
+            return True
+            
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"创建目录时发生错误: {e}")
+            return False
+    
+    def browse_storage_path(self):
+        """Browse for knowledge base storage path."""
+        current_path = self.storage_path_input.text().strip()
+        if not current_path:
+            current_path = "./data/knowledge_base"
+        
+        # Use the parent directory if the current path doesn't exist
+        if not os.path.exists(current_path):
+            current_path = os.path.dirname(current_path) if os.path.dirname(current_path) else "."
+        
+        selected_path = QFileDialog.getExistingDirectory(
+            self, 
+            "选择知识库存储路径", 
+            current_path,
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+        
+        if selected_path:
+            self.storage_path_input.setText(selected_path)
+    
+    def browse_chromadb_path(self):
+        """Browse for ChromaDB storage path."""
+        current_path = self.chromadb_path_input.text().strip()
+        if not current_path:
+            current_path = "./data/chromadb"
+        
+        # Use the parent directory if the current path doesn't exist
+        if not os.path.exists(current_path):
+            current_path = os.path.dirname(current_path) if os.path.dirname(current_path) else "."
+        
+        selected_path = QFileDialog.getExistingDirectory(
+            self, 
+            "选择ChromaDB存储路径", 
+            current_path,
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+        
+        if selected_path:
+            self.chromadb_path_input.setText(selected_path)
     
     def reset_settings(self):
         """Reset settings to defaults."""
