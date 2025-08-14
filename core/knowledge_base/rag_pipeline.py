@@ -108,35 +108,60 @@ class RAGPipeline:
                 return self._generate_standard_response(query)
             
             # Retrieve relevant knowledge
+            print(f"🔍 [RAG管道] 开始检索知识，查询: {query}")
+            print(f"📚 [RAG管道] 搜索集合: {[c for c in collections_to_search]}")
             self.logger.debug(f"Retrieving knowledge for query: {query[:50]}...")
             knowledge_fragments = self._retrieve_knowledge(query, collections_to_search)
             
+            print(f"📊 [RAG管道] 检索到 {len(knowledge_fragments)} 个知识片段")
+            if knowledge_fragments:
+                for i, fragment in enumerate(knowledge_fragments[:3]):  # 只显示前3个
+                    print(f"   片段 {i+1}: 相关度={fragment.relevance_score:.3f}, 内容预览='{fragment.content[:100]}...'")
+            
             if not knowledge_fragments:
+                print("❌ [RAG管道] 没有找到相关知识，使用标准LLM响应")
                 self.logger.info("No relevant knowledge found, using standard LLM response")
                 return self._generate_standard_response(query)
             
             # Filter fragments by relevance score
+            print(f"🎯 [RAG管道] 过滤相关度阈值: {self.min_relevance_score}")
             relevant_fragments = [
                 fragment for fragment in knowledge_fragments
                 if fragment.relevance_score >= self.min_relevance_score
             ]
             
+            print(f"✅ [RAG管道] 过滤后剩余 {len(relevant_fragments)} 个相关片段")
             if not relevant_fragments:
+                print("❌ [RAG管道] 没有片段满足相关度阈值，使用标准LLM响应")
                 self.logger.info("No fragments meet relevance threshold, using standard LLM response")
                 return self._generate_standard_response(query)
             
             # Limit number of fragments
+            original_count = len(relevant_fragments)
             relevant_fragments = relevant_fragments[:self.max_knowledge_fragments]
+            print(f"📝 [RAG管道] 限制片段数量: {original_count} -> {len(relevant_fragments)} (最大: {self.max_knowledge_fragments})")
             
             # Build enhanced prompt
+            print("🔧 [RAG管道] 构建增强提示词...")
             knowledge_context = self._format_knowledge_context(relevant_fragments)
             enhanced_prompt = self.build_enhanced_prompt(query, knowledge_context)
             
+            print("=" * 80)
+            print("📄 [RAG管道] 最终输入给大模型的完整提示词:")
+            print("-" * 80)
+            print(enhanced_prompt)
+            print("=" * 80)
+            
             # Generate response with knowledge
+            print(f"🚀 [RAG管道] 使用 {len(relevant_fragments)} 个知识片段生成增强响应")
             self.logger.debug(f"Generating enhanced response with {len(relevant_fragments)} knowledge fragments")
             response = self._generate_enhanced_response(enhanced_prompt)
             
-            return response
+            # Append knowledge fragments as reference material
+            print("📎 [RAG管道] 在响应后附加参考资料")
+            enhanced_response = self._append_reference_materials(response, relevant_fragments)
+            
+            return enhanced_response
             
         except Exception as e:
             self.logger.error(f"RAG pipeline failed: {e}")
@@ -154,9 +179,16 @@ class RAGPipeline:
         Returns:
             Enhanced prompt for LLM
         """
+        print(f"🔧 [RAG管道] 构建增强提示词")
+        print(f"   - 原始查询长度: {len(original_query)} 字符")
+        print(f"   - 知识上下文长度: {len(knowledge_context)} 字符")
+        print(f"   - 最大上下文长度限制: {self.max_context_length} 字符")
+        
         # Truncate context if too long
+        original_context_length = len(knowledge_context)
         if len(knowledge_context) > self.max_context_length:
             knowledge_context = knowledge_context[:self.max_context_length] + "\n\n[内容已截断...]"
+            print(f"✂️ [RAG管道] 知识上下文被截断: {original_context_length} -> {len(knowledge_context)} 字符")
         
         enhanced_prompt = f"""基于以下知识内容回答问题：
 
@@ -166,6 +198,7 @@ class RAGPipeline:
 
 请基于上述知识内容提供准确、详细的回答。如果知识内容中没有相关信息，请明确说明并提供你的一般性回答。请在回答中引用相关的知识来源。"""
         
+        print(f"✅ [RAG管道] 增强提示词构建完成，总长度: {len(enhanced_prompt)} 字符")
         return enhanced_prompt
     
     def should_use_knowledge_base(self) -> bool:
@@ -202,6 +235,8 @@ class RAGPipeline:
         Returns:
             Dictionary with knowledge base status information
         """
+        print(f"📊 [RAG管道] 获取知识库状态，当前内存状态: enabled={self.enabled}")
+        
         status = {
             "enabled": self.enabled,
             "fallback_mode": self._fallback_mode,
@@ -254,28 +289,49 @@ class RAGPipeline:
     
     def enable_knowledge_base(self):
         """Enable knowledge base functionality."""
+        print("🔥 [RAG管道] 启用知识库功能...")
+        
+        print("🔧 [RAG管道] 设置内部状态...")
         self.enabled = True
         self._fallback_mode = False
+        print(f"   - enabled: {self.enabled}")
+        print(f"   - fallback_mode: {self._fallback_mode}")
         
         # Save the enabled state to configuration
+        print("💾 [RAG管道] 保存启用状态到配置文件...")
         try:
             from utils.config_manager import save_knowledge_base_config
+            print("📝 [RAG管道] 调用配置管理器保存启用状态...")
             save_knowledge_base_config({"enabled": True})
+            print("✅ [RAG管道] 知识库已启用，配置已保存")
             self.logger.info("Knowledge base enabled and configuration saved")
         except Exception as e:
+            print(f"⚠️ [RAG管道] 保存配置失败: {e}")
+            import traceback
+            print(f"🔍 [RAG管道] 错误详情: {traceback.format_exc()}")
             self.logger.warning(f"Failed to save knowledge base configuration: {e}")
             self.logger.info("Knowledge base enabled (configuration not saved)")
     
     def disable_knowledge_base(self):
         """Disable knowledge base functionality."""
+        print("🔥 [RAG管道] 禁用知识库功能...")
+        
+        print("🔧 [RAG管道] 设置内部状态...")
         self.enabled = False
+        print(f"   - enabled: {self.enabled}")
         
         # Save the disabled state to configuration
+        print("💾 [RAG管道] 保存禁用状态到配置文件...")
         try:
             from utils.config_manager import save_knowledge_base_config
+            print("📝 [RAG管道] 调用配置管理器保存禁用状态...")
             save_knowledge_base_config({"enabled": False})
+            print("✅ [RAG管道] 知识库已禁用，配置已保存")
             self.logger.info("Knowledge base disabled and configuration saved")
         except Exception as e:
+            print(f"⚠️ [RAG管道] 保存配置失败: {e}")
+            import traceback
+            print(f"🔍 [RAG管道] 错误详情: {traceback.format_exc()}")
             self.logger.warning(f"Failed to save knowledge base configuration: {e}")
             self.logger.info("Knowledge base disabled (configuration not saved)")
     
@@ -384,17 +440,22 @@ class RAGPipeline:
             List of knowledge fragments
         """
         if not self.knowledge_base_manager:
+            print("❌ [RAG管道] 知识库管理器不可用")
             return []
         
         top_k = top_k or self.max_knowledge_fragments * 2  # Get more for filtering
+        print(f"🔍 [RAG管道] 调用知识库管理器搜索，top_k={top_k}")
         
         try:
-            return self.knowledge_base_manager.search_knowledge(
+            fragments = self.knowledge_base_manager.search_knowledge(
                 query=query,
                 collection_ids=collections,
                 top_k=top_k
             )
+            print(f"📊 [RAG管道] 知识库管理器返回 {len(fragments)} 个结果")
+            return fragments
         except Exception as e:
+            print(f"❌ [RAG管道] 知识检索失败: {e}")
             self.logger.error(f"Knowledge retrieval failed: {e}")
             return []
     
@@ -409,7 +470,10 @@ class RAGPipeline:
             Formatted context string
         """
         if not fragments:
+            print("⚠️ [RAG管道] 没有知识片段需要格式化")
             return ""
+        
+        print(f"📝 [RAG管道] 格式化 {len(fragments)} 个知识片段为上下文")
         
         # Use the retriever's formatting if available
         try:
@@ -417,11 +481,16 @@ class RAGPipeline:
                 hasattr(self.knowledge_base_manager, 'retriever') and
                 self.knowledge_base_manager.retriever and
                 hasattr(self.knowledge_base_manager.retriever, 'format_knowledge_context')):
-                return self.knowledge_base_manager.retriever.format_knowledge_context(fragments)
+                print("🔧 [RAG管道] 使用检索器的格式化方法")
+                formatted = self.knowledge_base_manager.retriever.format_knowledge_context(fragments)
+                print(f"📄 [RAG管道] 格式化后的知识上下文长度: {len(formatted)} 字符")
+                return formatted
         except Exception as e:
+            print(f"⚠️ [RAG管道] 无法使用检索器格式化: {e}")
             self.logger.debug(f"Could not use retriever formatting: {e}")
         
         # Fallback formatting
+        print("🔧 [RAG管道] 使用默认格式化方法")
         context_parts = ["相关知识内容：\n"]
         
         for i, fragment in enumerate(fragments, 1):
@@ -476,6 +545,46 @@ class RAGPipeline:
                 return f"抱歉，我无法处理您的问题。错误信息：{str(e)}"
         else:
             return "抱歉，语言模型服务不可用。"
+    
+    def _append_reference_materials(self, response: str, fragments: List) -> str:
+        """
+        Append reference materials to the response.
+        
+        Args:
+            response: Original LLM response
+            fragments: List of knowledge fragments used
+            
+        Returns:
+            Response with appended reference materials
+        """
+        if not fragments:
+            return response
+        
+        # Build reference section
+        reference_parts = [
+            "\n\n" + "="*50,
+            "📚 参考资料",
+            "="*50
+        ]
+        
+        for i, fragment in enumerate(fragments, 1):
+            reference_parts.append(f"\n【参考资料 {i}】")
+            reference_parts.append(f"来源：{fragment.source_document}")
+            reference_parts.append(f"相关度：{fragment.relevance_score:.3f}")
+            reference_parts.append(f"内容：{fragment.content}")
+            
+            # Add metadata if available
+            if hasattr(fragment, 'metadata') and fragment.metadata:
+                metadata_info = []
+                for key, value in fragment.metadata.items():
+                    if key not in ['source_file', 'document_id']:  # Skip redundant info
+                        metadata_info.append(f"{key}: {value}")
+                if metadata_info:
+                    reference_parts.append(f"详情：{', '.join(metadata_info)}")
+        
+        reference_parts.append("\n" + "="*50)
+        
+        return response + "\n".join(reference_parts)
     
     def _generate_fallback_response(self, query: str, error_message: str) -> str:
         """

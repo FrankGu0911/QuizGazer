@@ -1346,6 +1346,10 @@ class KnowledgeBasePanel(QWidget):
 
         self.setup_ui()
         self.refresh_data()
+        
+        # 在初始化完成后连接复选框信号，避免初始化时触发不必要的事件
+        print("🔗 [知识库面板] 连接复选框状态变化信号...")
+        self.enable_checkbox.stateChanged.connect(self.safe_toggle_knowledge_base)
 
         # Setup refresh timer
         self.refresh_timer = QTimer()
@@ -1574,7 +1578,7 @@ class KnowledgeBasePanel(QWidget):
 
         self.enable_checkbox = QCheckBox("启用知识库")
         self.enable_checkbox.setStyleSheet(f"color: {self.text_color};")
-        self.enable_checkbox.stateChanged.connect(self.safe_toggle_knowledge_base)
+        # 先不连接信号，等初始化完成后再连接
 
         status_layout.addWidget(self.status_label)
         status_layout.addWidget(self.enable_checkbox)
@@ -1725,32 +1729,51 @@ class KnowledgeBasePanel(QWidget):
 
     def safe_toggle_knowledge_base(self, state):
         """Safe toggle with recursion protection."""
+        # 在PySide6中，stateChanged信号传递的是整数值，需要与枚举的value比较
+        is_checked = (state == Qt.CheckState.Checked.value)
+        
+        print("🔄 [知识库面板] 知识库启用勾选框状态变化")
+        print(f"📋 [知识库面板] 新状态: {'选中' if is_checked else '未选中'}")
+        
         # Prevent recursion during UI updates
         if hasattr(self, '_updating_checkbox') and self._updating_checkbox:
+            print("🔒 [知识库面板] 检测到递归更新，跳过处理")
             return
         
+        print("🎯 [知识库面板] 调用 toggle_knowledge_base...")
         self.toggle_knowledge_base(state)
     
     def toggle_knowledge_base(self, state):
         """Toggle knowledge base enabled state."""
+        print("🎛️ [知识库面板] 开始切换知识库状态...")
+        
         if not KNOWLEDGE_BASE_AVAILABLE:
+            print("❌ [知识库面板] 知识库功能不可用，无法切换")
             return
 
         # Get intended state
-        intended_enabled = (state == Qt.Checked)
+        intended_enabled = (state == Qt.CheckState.Checked.value)
+        print(f"🎯 [知识库面板] 目标状态: {'启用' if intended_enabled else '禁用'}")
         
         # Perform the operation
+        print(f"🎛️ [知识库面板] 执行知识库{'启用' if intended_enabled else '禁用'}操作...")
         try:
             if intended_enabled:
+                print("🚀 [知识库面板] 调用 ai_services.enable_knowledge_base()...")
                 result = ai_services.enable_knowledge_base()
             else:
+                print("🛑 [知识库面板] 调用 ai_services.disable_knowledge_base()...")
                 result = ai_services.disable_knowledge_base()
             
-            if not result:
-                print(f"Knowledge base toggle operation failed")
+            if result:
+                print(f"✅ [知识库面板] 知识库{'启用' if intended_enabled else '禁用'}操作成功")
+            else:
+                print(f"❌ [知识库面板] 知识库{'启用' if intended_enabled else '禁用'}操作失败")
                 
         except Exception as e:
-            print(f"Knowledge base toggle error: {e}")
+            print(f"❌ [知识库面板] 知识库切换时发生错误: {e}")
+            import traceback
+            print(f"🔍 [知识库面板] 错误详情: {traceback.format_exc()}")
         
         # Always refresh UI to match actual backend state
         # This ensures UI is always consistent regardless of what happened
@@ -1758,17 +1781,34 @@ class KnowledgeBasePanel(QWidget):
     
     def simple_refresh_ui(self):
         """Simple UI refresh to match backend state."""
+        print("🔄 [知识库面板] 开始刷新UI状态...")
         try:
             # Get current backend state
+            print("📊 [知识库面板] 获取后端状态...")
             status = ai_services.get_knowledge_base_status()
             enabled = status.get('enabled', False)
             available = status.get('available', False)
+            print(f"📋 [知识库面板] 后端状态 - 启用: {enabled}, 可用: {available}")
             
             # Update checkbox - use a flag to prevent recursion
-            if not hasattr(self, '_updating_checkbox'):
-                self._updating_checkbox = True
-                self.enable_checkbox.setChecked(enabled)
-                self._updating_checkbox = False
+            current_checked = self.enable_checkbox.isChecked()
+            print(f"🔘 [知识库面板] 当前复选框状态: {current_checked}, 目标状态: {enabled}")
+            
+            if not hasattr(self, '_updating_checkbox') or not self._updating_checkbox:
+                if current_checked != enabled:
+                    print(f"🔄 [知识库面板] 更新复选框状态: {current_checked} -> {enabled}")
+                    self._updating_checkbox = True
+                    try:
+                        # 使用blockSignals来阻止信号发射
+                        self.enable_checkbox.blockSignals(True)
+                        self.enable_checkbox.setChecked(enabled)
+                        self.enable_checkbox.blockSignals(False)
+                    finally:
+                        self._updating_checkbox = False
+                else:
+                    print("✅ [知识库面板] 复选框状态已同步，无需更新")
+            else:
+                print("🔒 [知识库面板] 正在更新中，跳过复选框状态更新")
             
             # Update buttons
             buttons_enabled = enabled and available
@@ -1807,22 +1847,31 @@ class KnowledgeBasePanel(QWidget):
 
     def on_collection_selection_changed(self, item):
         """Handle collection selection change."""
+        print("🔄 [知识库面板] 集合选择状态变化")
         selected_ids = []
 
         for i in range(self.collections_list.count()):
             item = self.collections_list.item(i)
-            if item.checkState() == Qt.Checked:
+            # 修复PySide6复选框状态比较问题 - 直接比较枚举对象
+            is_checked = (item.checkState() == Qt.CheckState.Checked)
+            print(f"📋 [知识库面板] 集合 {i}: checkState={item.checkState()}, 是否选中={is_checked}")
+            
+            if is_checked:
                 collection_id = item.data(Qt.UserRole)
                 selected_ids.append(collection_id)
+                print(f"   ✅ 选中集合: {collection_id}")
 
         self.selected_collections = selected_ids
+        print(f"📊 [知识库面板] 总共选中 {len(selected_ids)} 个集合")
 
         # Update AI services with selected collections
         if KNOWLEDGE_BASE_AVAILABLE:
             try:
+                print(f"🔧 [知识库面板] 更新AI服务的选中集合: {selected_ids}")
                 ai_services.set_knowledge_base_collections(selected_ids)
+                print("✅ [知识库面板] 集合设置成功")
             except Exception as e:
-                print(f"Failed to set collections: {e}")
+                print(f"❌ [知识库面板] 设置集合失败: {e}")
 
     def upload_documents(self):
         """Open document upload dialog."""
@@ -1909,48 +1958,71 @@ class KnowledgeBasePanel(QWidget):
         self.refresh_data()
 
     def search_knowledge(self):
-        """Search knowledge base and show preview."""
+        """Search knowledge base with current query using RAG."""
         query = self.search_input.text().strip()
         if not query:
+            self.search_results.setText("请输入搜索问题")
             return
-
-        # Show warning about API costs
-        reply = QMessageBox.question(
-            self, "确认搜索", 
-            f"搜索将调用Embedding和Rerank API，可能产生费用。\n\n查询: {query[:50]}{'...' if len(query) > 50 else ''}\n\n确定要继续吗？",
-            QMessageBox.Yes | QMessageBox.No
-        )
         
-        if reply != QMessageBox.Yes:
-            return
-
         if not KNOWLEDGE_BASE_AVAILABLE:
             self.search_results.setText("知识库功能不可用")
             return
-
+        
+        # 检查是否选中了集合
+        if not self.selected_collections:
+            self.search_results.setText("请先选择要搜索的集合")
+            return
+        
+        print(f"🔍 [知识库面板] 开始RAG搜索，查询: {query}")
+        print(f"📚 [知识库面板] 使用集合: {self.selected_collections}")
+        
+        # 显示搜索中状态
+        self.search_results.setText("🔍 正在搜索中，请稍候...")
+        self.search_button.setEnabled(False)
+        
         try:
-            self.search_results.setText("搜索中...")
-
-            # Search with selected collections
-            results = ai_services.search_knowledge_preview(
-                query=query,
-                collections=self.selected_collections if self.selected_collections else None,
-                top_k=3
+            # 使用完整的RAG功能
+            print("🚀 [知识库面板] 调用RAG增强响应")
+            response = ai_services.get_answer_from_text(
+                question_text=query,
+                use_knowledge_base=True
             )
-
-            if results:
-                result_text = f"找到 {len(results)} 个相关片段:\n\n"
-                for i, result in enumerate(results, 1):
-                    result_text += f"{i}. 来源: {result.get('source_document', '未知')}\n"
-                    result_text += f"   相关度: {result.get('relevance_score', 0):.3f}\n"
-                    result_text += f"   内容: {result.get('content_preview', '无预览')}\n\n"
+            
+            if response:
+                print(f"✅ [知识库面板] RAG搜索成功，响应长度: {len(response)} 字符")
+                
+                # 格式化显示结果
+                formatted_result = f"🤖 RAG智能回答\n{'='*50}\n\n"
+                formatted_result += f"❓ 问题: {query}\n\n"
+                formatted_result += f"💡 回答:\n{response}\n\n"
+                formatted_result += f"⏰ 搜索时间: {self.get_current_time()}"
+                
+                self.search_results.setText(formatted_result)
             else:
-                result_text = "未找到相关知识片段"
-
-            self.search_results.setText(result_text)
-
+                print("❌ [知识库面板] RAG返回空响应")
+                self.search_results.setText("未能生成回答，请尝试重新表述问题")
+                
         except Exception as e:
-            self.search_results.setText(f"搜索失败: {e}")
+            print(f"❌ [知识库面板] RAG搜索失败: {e}")
+            import traceback
+            print(f"🔍 [知识库面板] 错误详情: {traceback.format_exc()}")
+            
+            error_msg = f"搜索失败: {str(e)}\n\n"
+            error_msg += "请检查:\n"
+            error_msg += "• 知识库是否正常启用\n"
+            error_msg += "• 是否选择了有效的集合\n"
+            error_msg += "• 网络连接是否正常"
+            
+            self.search_results.setText(error_msg)
+        
+        finally:
+            # 恢复搜索按钮
+            self.search_button.setEnabled(True)
+    
+    def get_current_time(self):
+        """获取当前时间字符串"""
+        from datetime import datetime
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     def closeEvent(self, event):
         """Handle widget close event."""

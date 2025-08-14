@@ -96,10 +96,14 @@ def _get_llm_response_for_rag(prompt: str) -> str:
     """
     Internal function to get LLM response for RAG pipeline.
     This wraps the existing get_answer_from_text function.
+    
+    IMPORTANT: use_knowledge_base=False to prevent recursive calls!
     """
     try:
-        return get_answer_from_text(prompt, force_search=False)
+        print("🔄 [AI服务] RAG管道调用LLM服务（禁用知识库以防递归）")
+        return get_answer_from_text(prompt, force_search=False, use_knowledge_base=False)
     except Exception as e:
+        print(f"❌ [AI服务] RAG的LLM调用失败: {e}")
         logging.error(f"Error getting LLM response for RAG: {e}")
         return f"抱歉，处理您的问题时出现错误：{str(e)}"
 
@@ -375,19 +379,34 @@ def get_answer_from_text(question_text, force_search=False, use_knowledge_base=T
         str: The answer from the LLM, or an error message.
     """
     # Try to use knowledge base first if available and enabled
+    print(f"🤖 [AI服务] get_answer_from_text 调用，use_knowledge_base={use_knowledge_base}")
     if use_knowledge_base and is_knowledge_base_available():
+        print("🚀 [AI服务] 知识库可用，尝试使用RAG增强响应")
         try:
             rag_pipeline = get_rag_pipeline()
             if rag_pipeline and rag_pipeline.should_use_knowledge_base():
+                print("✅ [AI服务] RAG管道可用且应该使用知识库")
+                print("🔍 [AI服务] 调用RAG管道处理查询...")
                 logging.info("Using knowledge base for enhanced response")
                 enhanced_response = rag_pipeline.process_query_with_knowledge(question_text)
                 if enhanced_response and not enhanced_response.startswith("抱歉"):
+                    print("✅ [AI服务] RAG增强响应成功，返回结果")
+                    print(f"📝 [AI服务] 响应长度: {len(enhanced_response)} 字符")
                     return enhanced_response
                 else:
+                    print("⚠️ [AI服务] RAG响应不满意，回退到标准LLM")
                     logging.info("Knowledge base response not satisfactory, falling back to standard LLM")
+            else:
+                print("❌ [AI服务] RAG管道不可用或不应使用知识库")
         except Exception as e:
+            print(f"❌ [AI服务] 使用知识库时出错: {e}")
             logging.error(f"Error using knowledge base: {e}")
             logging.info("Falling back to standard LLM response")
+    else:
+        if not use_knowledge_base:
+            print("🔒 [AI服务] 知识库使用被禁用")
+        else:
+            print("❌ [AI服务] 知识库不可用")
     
     # Standard LLM processing (original implementation)
     llm_config = get_model_config('llm')
@@ -546,14 +565,25 @@ def enable_knowledge_base():
     Returns:
         bool: True if successful, False otherwise
     """
+    print("🚀 [AI服务] 启用知识库功能...")
+    
     if not is_knowledge_base_available():
+        print("❌ [AI服务] 知识库不可用，无法启用")
         return False
     
     try:
+        print("🔧 [AI服务] 获取RAG管道实例...")
         rag_pipeline = get_rag_pipeline()
+        
+        print("⚡ [AI服务] 调用RAG管道的启用知识库方法...")
         rag_pipeline.enable_knowledge_base()
+        
+        print("✅ [AI服务] 知识库功能启用成功")
         return True
     except Exception as e:
+        print(f"❌ [AI服务] 启用知识库时发生错误: {e}")
+        import traceback
+        print(f"🔍 [AI服务] 错误详情: {traceback.format_exc()}")
         logging.error(f"Error enabling knowledge base: {e}")
         return False
 
@@ -564,14 +594,25 @@ def disable_knowledge_base():
     Returns:
         bool: True if successful, False otherwise
     """
+    print("🛑 [AI服务] 禁用知识库功能...")
+    
     if not is_knowledge_base_available():
+        print("❌ [AI服务] 知识库不可用，无法禁用")
         return False
     
     try:
+        print("🔧 [AI服务] 获取RAG管道实例...")
         rag_pipeline = get_rag_pipeline()
+        
+        print("⚡ [AI服务] 调用RAG管道的禁用知识库方法...")
         rag_pipeline.disable_knowledge_base()
+        
+        print("✅ [AI服务] 知识库功能禁用成功")
         return True
     except Exception as e:
+        print(f"❌ [AI服务] 禁用知识库时发生错误: {e}")
+        import traceback
+        print(f"🔍 [AI服务] 错误详情: {traceback.format_exc()}")
         logging.error(f"Error disabling knowledge base: {e}")
         return False
 

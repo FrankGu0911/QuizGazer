@@ -291,26 +291,43 @@ def save_knowledge_base_config(config_data: Dict[str, Any]):
     Args:
         config_data (dict): A dictionary containing knowledge base configuration details.
     """
+    print("📄 [配置管理器] 开始保存知识库配置到 config.ini")
+    print(f"📝 [配置管理器] 接收到的配置数据: {config_data}")
+    
     config = configparser.ConfigParser()
     config_path = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
+    print(f"📂 [配置管理器] 配置文件路径: {config_path}")
     
     if os.path.exists(config_path):
+        print("📖 [配置管理器] 读取现有配置文件...")
         config.read(config_path)
+    else:
+        print("🆕 [配置管理器] 配置文件不存在，将创建新文件")
     
     if 'knowledge_base' not in config:
+        print("➕ [配置管理器] 添加 [knowledge_base] 配置节")
         config.add_section('knowledge_base')
+    else:
+        print("✅ [配置管理器] [knowledge_base] 配置节已存在")
     
     # Update knowledge base settings
+    print("🔄 [配置管理器] 更新知识库设置...")
     for key, value in config_data.items():
         # Convert boolean values to lowercase strings for INI format
         if isinstance(value, bool):
-            config.set('knowledge_base', key, str(value).lower())
+            str_value = str(value).lower()
+            print(f"   - {key}: {value} -> {str_value} (布尔值转换)")
+            config.set('knowledge_base', key, str_value)
         else:
+            print(f"   - {key}: {value}")
             config.set('knowledge_base', key, str(value))
     
     # Write to file
+    print("💾 [配置管理器] 写入配置文件...")
     with open(config_path, 'w') as configfile:
         config.write(configfile)
+    
+    print("✅ [配置管理器] 知识库配置保存完成")
 
 
 def save_chromadb_config(config_data: Dict[str, Any]):

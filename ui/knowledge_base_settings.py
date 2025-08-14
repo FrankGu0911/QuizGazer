@@ -578,13 +578,19 @@ Reranker API用于对搜索结果进行重新排序，提高搜索结果的相�
     
     def on_kb_enable_changed(self):
         """Handle knowledge base enable/disable change."""
+        print("🔄 [知识库设置] 启用知识库勾选框状态变化")
         enabled = self.enable_kb_checkbox.isChecked()
+        print(f"📋 [知识库设置] 新状态: {'启用' if enabled else '禁用'}")
         
         # Enable/disable other tabs
+        print("🔧 [知识库设置] 更新其他标签页的启用状态...")
         for i in range(1, self.tab_widget.count()):
             self.tab_widget.setTabEnabled(i, enabled)
+            print(f"   - 标签页 {i}: {'启用' if enabled else '禁用'}")
         
+        print("📊 [知识库设置] 更新状态显示...")
         self.update_status()
+        print("✅ [知识库设置] 勾选框状态变化处理完成")
     
     def on_connection_type_changed(self):
         """Handle connection type change."""
@@ -729,18 +735,26 @@ Reranker API用于对搜索结果进行重新排序，提高搜索结果的相�
     
     def save_settings(self):
         """Save all settings."""
+        print("💾 [知识库设置] 开始保存设置...")
+        
         if not CONFIG_AVAILABLE:
+            print("❌ [知识库设置] 配置功能不可用")
             QMessageBox.warning(self, "错误", "配置功能不可用")
             return
         
         try:
+            print("📁 [知识库设置] 创建必要的目录...")
             # Create necessary directories before saving
             if not self.create_required_directories():
+                print("❌ [知识库设置] 目录创建失败，保存中止")
                 return
             
             # Save knowledge base config
+            enabled_status = self.enable_kb_checkbox.isChecked()
+            print(f"⚙️ [知识库设置] 准备保存知识库配置，启用状态: {enabled_status}")
+            
             kb_config = {
-                'enabled': self.enable_kb_checkbox.isChecked(),
+                'enabled': enabled_status,
                 'storage_path': self.storage_path_input.text().strip(),
                 'max_file_size_mb': self.max_file_size_input.value(),
                 'chunk_size': self.chunk_size_input.value(),
@@ -749,27 +763,52 @@ Reranker API用于对搜索结果进行重新排序，提高搜索结果的相�
                 'background_processing': True,
                 'max_concurrent_tasks': 3
             }
+            print(f"📝 [知识库设置] 知识库配置内容: {kb_config}")
+            
+            print("💾 [知识库设置] 调用 save_knowledge_base_config...")
             save_knowledge_base_config(kb_config)
+            print("✅ [知识库设置] 知识库配置保存完成")
             
             # Save ChromaDB config
+            print("🗄️ [知识库设置] 保存 ChromaDB 配置...")
             chromadb_config = self.get_current_config("chromadb")
             if chromadb_config:
+                print(f"📝 [知识库设置] ChromaDB 配置内容: {chromadb_config}")
                 save_chromadb_config(chromadb_config)
+                print("✅ [知识库设置] ChromaDB 配置保存完成")
             
             # Save embedding config
+            print("🔤 [知识库设置] 保存 Embedding API 配置...")
             embedding_config = self.get_current_config("embedding")
             if embedding_config:
+                # 隐藏API密钥用于日志
+                safe_config = embedding_config.copy()
+                if 'api_key' in safe_config:
+                    safe_config['api_key'] = '***隐藏***'
+                print(f"📝 [知识库设置] Embedding 配置内容: {safe_config}")
                 save_embedding_api_config(embedding_config)
+                print("✅ [知识库设置] Embedding API 配置保存完成")
             
             # Save reranker config
+            print("🔄 [知识库设置] 保存 Reranker API 配置...")
             reranker_config = self.get_current_config("reranker")
             if reranker_config:
+                # 隐藏API密钥用于日志
+                safe_config = reranker_config.copy()
+                if 'api_key' in safe_config:
+                    safe_config['api_key'] = '***隐藏***'
+                print(f"📝 [知识库设置] Reranker 配置内容: {safe_config}")
                 save_reranker_api_config(reranker_config)
+                print("✅ [知识库设置] Reranker API 配置保存完成")
             
+            print("🎉 [知识库设置] 所有设置保存成功！")
             QMessageBox.information(self, "成功", "设置已保存并立即生效。")
             self.accept()
             
         except Exception as e:
+            print(f"❌ [知识库设置] 保存设置时发生错误: {e}")
+            import traceback
+            print(f"🔍 [知识库设置] 错误详情: {traceback.format_exc()}")
             QMessageBox.warning(self, "错误", f"保存设置失败: {e}")
     
     def create_required_directories(self):
