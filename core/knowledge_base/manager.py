@@ -280,7 +280,13 @@ class KnowledgeBaseManager:
         Returns:
             ProcessingTask object or None if not found
         """
-        return self.task_manager.get_task_status(task_id)
+        task_status = self.task_manager.get_task_status(task_id)
+        
+        # If task is not found, it might have been cleaned up after completion
+        if task_status is None:
+            self.logger.debug(f"Task {task_id} not found - likely completed and cleaned up")
+        
+        return task_status
     
     def cancel_processing(self, task_id: str) -> bool:
         """
@@ -623,6 +629,26 @@ class KnowledgeBaseManager:
         """
         return self.task_manager.list_all_tasks()
     
+    def sync_metadata_from_remote(self) -> bool:
+        """
+        Manually sync metadata from remote ChromaDB.
+        
+        Returns:
+            True if sync was successful, False otherwise
+        """
+        if self.chromadb_config.connection_type != "remote":
+            self.logger.warning("Metadata sync is only available for remote ChromaDB connections")
+            return False
+        
+        try:
+            with self._lock:
+                self._sync_metadata_from_chromadb()
+            self.logger.info("Manual metadata sync completed successfully")
+            return True
+        except Exception as e:
+            self.logger.error(f"Manual metadata sync failed: {e}")
+            return False
+    
     def get_knowledge_base_stats(self) -> Dict[str, Any]:
         """
         Get overall knowledge base statistics.
@@ -654,7 +680,7 @@ class KnowledgeBaseManager:
                 "storage_path": self.storage_path,
                 "vector_database": {
                     "connection_type": self.chromadb_config.connection_type,
-                    "path": self.chromadb_config.path
+                    "path": self.chromadb_config.path if self.chromadb_config.connection_type == "local" else f"{self.chromadb_config.host}:{self.chromadb_config.port}"
                 }
             }
     
@@ -703,32 +729,56 @@ class KnowledgeBaseManager:
     def _handle_document_processing_completion(self, task_id: str, document: Document, 
                                              progress: float, message: str):
         """Handle document processing completion callback."""
+        # Always log progress updates for debugging
+        self.logger.debug(f"Task {task_id} progress: {progress:.2f} - {message}")
+        
         if progress >= 1.0:  # Task completed
             task = self.task_manager.get_task_status(task_id)
-            if task and task.status.value == "completed":
-                # Update document and collection metadata
-                with self._lock:
-                    # Store document
-                    self._documents[document.id] = document
+            if task:
+                # Check if task is actually completed (not just progress = 1.0)
+                if task.status.value == "completed":
+                    # Update document and collection metadata
+                    with self._lock:
+                        # Store document
+                        self._documents[document.id] = document
+                        
+                        # Update collection stats
+                        if document.collection_id in self._collections:
+                            collection = self._collections[document.collection_id]
+                            collection.document_count += 1
+                            # Update chunk count from task
+                            if hasattr(task, 'chunk_count') and task.chunk_count:
+                                collection.total_chunks += task.chunk_count
+                                document.chunk_count = task.chunk_count
+                        
+                        # Persist changes
+                        self._save_documents()
+                        self._save_collections()
                     
-                    # Update collection stats
-                    if document.collection_id in self._collections:
-                        collection = self._collections[document.collection_id]
-                        collection.document_count += 1
-                        # Update chunk count from task
-                        if hasattr(task, 'chunk_count') and task.chunk_count:
-                            collection.total_chunks += task.chunk_count
-                            document.chunk_count = task.chunk_count
-                    
-                    # Persist changes
-                    self._save_documents()
-                    self._save_collections()
-                
-                self.logger.info(f"Document processing completed for {document.filename}")
+                    self.logger.info(f"Document processing completed for {document.filename} with {getattr(task, 'chunk_count', 0)} chunks")
+                elif task.status.value == "failed":
+                    self.logger.error(f"Document processing failed for {document.filename}: {task.error_message}")
+                elif task.status.value == "processing":
+                    # This is the bug! Progress shows 100% but task is still processing
+                    self.logger.warning(f"Task {task_id} shows 100% progress but status is still 'processing'. This indicates a timing issue.")
+                    # Don't update metadata yet, wait for actual completion
+                else:
+                    self.logger.warning(f"Task {task_id} completed with unexpected status: {task.status.value}")
+            else:
+                self.logger.error(f"Task {task_id} not found when handling completion callback")
     
     def _load_metadata(self):
         """Load collection and document metadata from storage."""
-        # Load collections
+        # Try to sync from remote ChromaDB first if using remote connection
+        if self.chromadb_config.connection_type == "remote":
+            try:
+                self._sync_metadata_from_chromadb()
+                self.logger.info("Successfully synced metadata from remote ChromaDB")
+                return
+            except Exception as e:
+                self.logger.warning(f"Failed to sync from remote ChromaDB, falling back to local files: {e}")
+        
+        # Load collections from local files
         if os.path.exists(self.collections_file):
             try:
                 with open(self.collections_file, 'r', encoding='utf-8') as f:
@@ -745,12 +795,12 @@ class KnowledgeBaseManager:
                     )
                     self._collections[collection.id] = collection
                 
-                self.logger.info(f"Loaded {len(self._collections)} collections from storage")
+                self.logger.info(f"Loaded {len(self._collections)} collections from local storage")
                 
             except Exception as e:
                 self.logger.error(f"Failed to load collections metadata: {e}")
         
-        # Load documents
+        # Load documents from local files
         if os.path.exists(self.documents_file):
             try:
                 with open(self.documents_file, 'r', encoding='utf-8') as f:
@@ -769,10 +819,97 @@ class KnowledgeBaseManager:
                     )
                     self._documents[document.id] = document
                 
-                self.logger.info(f"Loaded {len(self._documents)} documents from storage")
+                self.logger.info(f"Loaded {len(self._documents)} documents from local storage")
                 
             except Exception as e:
                 self.logger.error(f"Failed to load documents metadata: {e}")
+    
+    def _sync_metadata_from_chromadb(self):
+        """Sync metadata from remote ChromaDB."""
+        if not self.vector_store:
+            raise Exception("Vector store not initialized")
+        
+        # Initialize vector store if needed
+        if not self.vector_store.client:
+            self.vector_store.initialize_database()
+        
+        # Get all collections from ChromaDB
+        collection_names = self.vector_store.list_collections()
+        self.logger.info(f"Found {len(collection_names)} collections in ChromaDB")
+        
+        synced_collections = {}
+        synced_documents = {}
+        
+        for collection_name in collection_names:
+            try:
+                # Get collection from ChromaDB
+                chroma_collection = self.vector_store.get_collection(collection_name)
+                if not chroma_collection:
+                    continue
+                
+                # Get collection metadata
+                metadata = chroma_collection.metadata or {}
+                
+                # Create Collection object
+                collection = Collection(
+                    id=collection_name,  # Use collection name as ID
+                    name=metadata.get('name', collection_name),
+                    description=metadata.get('description', ''),
+                    created_at=datetime.fromisoformat(metadata.get('created_at', datetime.now().isoformat())),
+                    document_count=0,  # Will be updated below
+                    total_chunks=chroma_collection.count()
+                )
+                
+                synced_collections[collection_name] = collection
+                
+                # Get documents in this collection
+                try:
+                    # Query all documents in the collection
+                    results = chroma_collection.get(include=["metadatas"])
+                    
+                    if results and 'metadatas' in results:
+                        # Group by document_id to count unique documents
+                        document_ids = set()
+                        for metadata in results['metadatas']:
+                            if metadata and 'document_id' in metadata:
+                                document_id = metadata['document_id']
+                                document_ids.add(document_id)
+                                
+                                # Create document record if not exists
+                                if document_id not in synced_documents:
+                                    document = Document(
+                                        id=document_id,
+                                        collection_id=collection_name,
+                                        filename=metadata.get('source_file', 'unknown'),
+                                        file_path=metadata.get('file_path', ''),
+                                        document_type=DocumentType(metadata.get('document_type', 'knowledge')),
+                                        processed_at=datetime.now(),  # Use current time as fallback
+                                        chunk_count=0,  # Will be counted
+                                        file_size=metadata.get('file_size', 0)
+                                    )
+                                    synced_documents[document_id] = document
+                                
+                                # Increment chunk count
+                                synced_documents[document_id].chunk_count += 1
+                        
+                        # Update collection document count
+                        collection.document_count = len(document_ids)
+                
+                except Exception as e:
+                    self.logger.warning(f"Failed to get documents for collection {collection_name}: {e}")
+                
+            except Exception as e:
+                self.logger.warning(f"Failed to sync collection {collection_name}: {e}")
+        
+        # Update in-memory storage
+        self._collections = synced_collections
+        self._documents = synced_documents
+        
+        # Save to local files for caching
+        self._save_collections()
+        self._save_documents()
+        
+        self.logger.info(f"Synced {len(synced_collections)} collections and {len(synced_documents)} documents from ChromaDB")
     
     def _save_collections(self):
         """Save collections metadata to storage."""

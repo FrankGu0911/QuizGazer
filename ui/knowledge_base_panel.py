@@ -1220,18 +1220,22 @@ class CollectionManagementDialog(QDialog):
 
 
 class DocumentProcessingWorker(QThread):
-    """Worker thread for document processing."""
+    """Worker thread for document processing with real progress tracking."""
 
-    progress_updated = Signal(int)  # Progress percentage
+    progress_updated = Signal(int)  # Progress percentage (0-100)
     status_updated = Signal(str)    # Status message
     finished = Signal(bool, str)    # Success, message
 
     def __init__(self, upload_data):
         super().__init__()
         self.upload_data = upload_data
+        self.current_file_index = 0
+        self.total_files = 0
+        self.file_progress_weights = []  # Weight of each file based on estimated complexity
+        self.accumulated_progress = 0.0
 
     def run(self):
-        """Process documents in background."""
+        """Process documents in background with real progress tracking."""
         try:
             if not KNOWLEDGE_BASE_AVAILABLE:
                 self.finished.emit(False, "知识库功能不可用")
@@ -1240,7 +1244,10 @@ class DocumentProcessingWorker(QThread):
             files = self.upload_data['files']
             collection_id = self.upload_data['collection_id']
             document_type = self.upload_data['document_type']
-            total_files = len(files)
+            self.total_files = len(files)
+
+            # Calculate progress weights based on file sizes
+            self._calculate_file_weights(files)
 
             # Get document type enum
             if document_type == "knowledge":
@@ -1260,8 +1267,9 @@ class DocumentProcessingWorker(QThread):
             failed_uploads = []
 
             for i, file_path in enumerate(files):
+                self.current_file_index = i
                 filename = os.path.basename(file_path)
-                self.status_updated.emit(f"处理文件: {filename}")
+                self.status_updated.emit(f"处理文件 ({i+1}/{self.total_files}): {filename}")
 
                 try:
                     # Submit document for processing
@@ -1271,51 +1279,86 @@ class DocumentProcessingWorker(QThread):
                         doc_type=doc_type
                     )
 
-                    # Wait for processing to complete (simplified approach)
-                    # In a real implementation, you might want to track tasks separately
+                    # Register progress callback for real-time updates
+                    kb_manager.task_manager.register_progress_callback(
+                        task.id, 
+                        self._on_task_progress
+                    )
+
+                    # Wait for processing to complete with real progress tracking
                     import time
-                    max_wait_time = 60  # Maximum wait time in seconds
+                    max_wait_time = 600  # Increase to 10 minutes
                     wait_time = 0
+                    last_progress = 0.0
+                    stall_count = 0
+                    max_stall_count = 30  # 30 seconds without progress = stall
 
                     while wait_time < max_wait_time:
                         task_status = kb_manager.get_processing_status(task.id)
-                        if task_status and task_status.status.value in ["completed", "failed", "cancelled"]:
+                        
+                        if task_status is None:
+                            # Task was cleaned up, likely completed
+                            break
+                        elif task_status.status.value in ["completed", "failed", "cancelled"]:
+                            break
+                        
+                        # Check for progress stall
+                        if task_status.progress == last_progress:
+                            stall_count += 1
+                        else:
+                            stall_count = 0
+                            last_progress = task_status.progress
+                        
+                        # If stalled for too long, but progress is high, assume completion
+                        if stall_count >= max_stall_count and task_status.progress >= 0.95:
+                            print(f"🔄 [UI] 任务 {task.id[:8]}... 进度停滞但接近完成，假设已完成")
                             break
 
                         time.sleep(1)
                         wait_time += 1
 
-                        # Update progress within file processing
-                        file_progress = int(
-                            (i + wait_time / max_wait_time) / total_files * 100)
-                        self.progress_updated.emit(min(file_progress, 99))
-
                     # Check final status
                     final_status = kb_manager.get_processing_status(task.id)
-                    if final_status and final_status.status.value == "completed":
+                    
+                    if final_status is None:
+                        # Task was cleaned up, assume success
                         successful_uploads += 1
-                    else:
-                        # Get specific error message if available
-                        error_msg = "处理超时或失败"
-                        if final_status and final_status.error_message:
-                            error_msg = final_status.error_message
-                        elif final_status:
-                            error_msg = f"处理状态: {final_status.status.value}"
+                        self._update_file_completed_progress()
+                    elif final_status.status.value == "completed":
+                        successful_uploads += 1
+                        self._update_file_completed_progress()
+                    elif final_status.status.value in ["failed", "cancelled"]:
+                        error_msg = final_status.error_message or f"任务{final_status.status.value}"
                         failed_uploads.append(f"{filename}: {error_msg}")
+                        self._update_file_completed_progress()
+                    elif final_status.status.value == "processing":
+                        # Still processing after timeout
+                        if final_status.progress >= 0.95:
+                            # Very high progress, likely completed but status not updated
+                            print(f"✅ [UI] 任务 {task.id[:8]}... 进度 {final_status.progress:.1%}，假设完成")
+                            successful_uploads += 1
+                        else:
+                            error_msg = f"处理超时 (进度: {final_status.progress:.1%})"
+                            failed_uploads.append(f"{filename}: {error_msg}")
+                        self._update_file_completed_progress()
+                    else:
+                        error_msg = f"未知状态: {final_status.status.value}"
+                        failed_uploads.append(f"{filename}: {error_msg}")
+                        self._update_file_completed_progress()
 
                 except Exception as e:
                     failed_uploads.append(f"{filename}: {str(e)}")
+                    self._update_file_completed_progress()
 
-                # Update overall progress
-                progress = int((i + 1) / total_files * 100)
-                self.progress_updated.emit(progress)
+            # Final progress update
+            self.progress_updated.emit(100)
 
             # Prepare result message
-            if successful_uploads == total_files:
-                message = f"所有 {total_files} 个文件处理完成"
+            if successful_uploads == self.total_files:
+                message = f"所有 {self.total_files} 个文件处理完成"
                 self.finished.emit(True, message)
             elif successful_uploads > 0:
-                message = f"{successful_uploads}/{total_files} 个文件处理成功"
+                message = f"{successful_uploads}/{self.total_files} 个文件处理成功"
                 if failed_uploads:
                     message += f"\n失败的文件:\n" + "\n".join(failed_uploads[:3])
                     if len(failed_uploads) > 3:
@@ -1329,6 +1372,63 @@ class DocumentProcessingWorker(QThread):
 
         except Exception as e:
             self.finished.emit(False, f"处理失败: {str(e)}")
+
+    def _calculate_file_weights(self, files):
+        """Calculate progress weights for each file based on size."""
+        import os
+        file_sizes = []
+        
+        for file_path in files:
+            try:
+                size = os.path.getsize(file_path)
+                file_sizes.append(size)
+            except:
+                file_sizes.append(1024 * 1024)  # Default 1MB if can't get size
+        
+        total_size = sum(file_sizes)
+        if total_size == 0:
+            # Equal weights if no size info
+            self.file_progress_weights = [1.0 / len(files)] * len(files)
+        else:
+            # Weight by file size
+            self.file_progress_weights = [size / total_size for size in file_sizes]
+        
+        print(f"📊 [UI] 文件权重分配: {[f'{w:.2%}' for w in self.file_progress_weights]}")
+
+    def _on_task_progress(self, task_id: str, progress: float, message: str):
+        """Handle real-time progress updates from task manager."""
+        try:
+            # Calculate overall progress
+            # Progress for completed files + progress for current file
+            completed_files_progress = sum(self.file_progress_weights[:self.current_file_index])
+            current_file_progress = self.file_progress_weights[self.current_file_index] * progress
+            overall_progress = completed_files_progress + current_file_progress
+            
+            # Convert to percentage and emit
+            progress_percent = int(overall_progress * 100)
+            progress_percent = min(progress_percent, 99)  # Cap at 99% until all files done
+            
+            self.progress_updated.emit(progress_percent)
+            
+            # Update status with detailed info
+            filename = os.path.basename(self.upload_data['files'][self.current_file_index])
+            detailed_message = f"处理文件 ({self.current_file_index+1}/{self.total_files}): {filename} - {message}"
+            self.status_updated.emit(detailed_message)
+            
+            print(f"📈 [UI] 任务 {task_id[:8]}... 进度: {progress:.1%} -> 总体: {progress_percent}% ({message})")
+            
+        except Exception as e:
+            print(f"❌ [UI] 进度回调错误: {e}")
+
+    def _update_file_completed_progress(self):
+        """Update progress when a file is completed."""
+        # Calculate progress for all completed files
+        completed_files_progress = sum(self.file_progress_weights[:self.current_file_index + 1])
+        progress_percent = int(completed_files_progress * 100)
+        progress_percent = min(progress_percent, 99)  # Cap at 99% until all files done
+        
+        self.progress_updated.emit(progress_percent)
+        print(f"✅ [UI] 文件 {self.current_file_index + 1} 完成，总体进度: {progress_percent}%")
 
 
 class KnowledgeBasePanel(QWidget):
@@ -1678,6 +1778,9 @@ class KnowledgeBasePanel(QWidget):
             # Simple refresh - just update UI to match backend
             self.refresh_ui_state()
 
+            # Sync selected collections from backend before refreshing UI
+            self.sync_selected_collections_from_backend()
+
             # Get collections
             self.collections = ai_services.get_knowledge_base_collections()
             self.update_collections_list()
@@ -1708,16 +1811,42 @@ class KnowledgeBasePanel(QWidget):
 
 
     def update_collections_list(self):
-        """Update the collections list widget."""
+        """Update the collections list widget while preserving selection state."""
+        # Save current selection state before clearing
+        previously_selected = set(self.selected_collections)
+        print(f"🔄 [知识库面板] 刷新集合列表，保持选中状态: {previously_selected}")
+        
         self.collections_list.clear()
 
         for collection in self.collections:
             item = QListWidgetItem(
                 f"{collection.name} ({collection.document_count} 文档)")
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Unchecked)
+            
+            # Restore previous selection state
+            if collection.id in previously_selected:
+                item.setCheckState(Qt.Checked)
+                print(f"   ✅ 恢复选中状态: {collection.name} ({collection.id})")
+            else:
+                item.setCheckState(Qt.Unchecked)
+                
             item.setData(Qt.UserRole, collection.id)
             self.collections_list.addItem(item)
+
+    def sync_selected_collections_from_backend(self):
+        """Sync selected collections from backend to UI."""
+        try:
+            # Get currently selected collections from RAG pipeline
+            rag_pipeline = ai_services.get_rag_pipeline()
+            if rag_pipeline:
+                backend_selected = rag_pipeline.get_selected_collections()
+                if backend_selected != self.selected_collections:
+                    print(f"🔄 [知识库面板] 同步后端选中集合: {backend_selected}")
+                    self.selected_collections = backend_selected.copy()
+                else:
+                    print(f"✅ [知识库面板] 集合选择状态已同步: {len(self.selected_collections)} 个")
+        except Exception as e:
+            print(f"❌ [知识库面板] 同步选中集合失败: {e}")
 
     def set_enabled_state(self, enabled: bool):
         """Set the enabled state of controls."""

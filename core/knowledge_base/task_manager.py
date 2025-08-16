@@ -203,7 +203,11 @@ class BackgroundTaskManager:
         Returns:
             Number of tasks cleaned up
         """
+        # Use a longer minimum retention time to avoid premature cleanup
+        min_retention_minutes = 5  # Keep tasks for at least 5 minutes
         cutoff_time = datetime.now() - timedelta(hours=older_than_hours)
+        min_cutoff_time = datetime.now() - timedelta(minutes=min_retention_minutes)
+        
         cleaned_count = 0
         
         with self._lock:
@@ -213,11 +217,18 @@ class BackgroundTaskManager:
                 # Only clean up completed, failed, or cancelled tasks
                 if task.status in [ProcessingStatus.COMPLETED, ProcessingStatus.FAILED, ProcessingStatus.CANCELLED]:
                     completion_time = task.completed_at or task.created_at
-                    if completion_time < cutoff_time:
-                        tasks_to_remove.append(task_id)
+                    
+                    # Ensure task is old enough AND has been completed for at least min_retention_minutes
+                    if completion_time < cutoff_time and completion_time < min_cutoff_time:
+                        # Additional check: make sure no callbacks are still registered
+                        if task_id not in self._progress_callbacks or not self._progress_callbacks[task_id]:
+                            tasks_to_remove.append(task_id)
+                        else:
+                            self.logger.debug(f"Keeping task {task_id} - callbacks still registered")
             
             # Remove old tasks
             for task_id in tasks_to_remove:
+                self.logger.debug(f"Cleaning up task {task_id}")
                 del self._tasks[task_id]
                 self._task_futures.pop(task_id, None)
                 self._progress_callbacks.pop(task_id, None)
@@ -254,6 +265,48 @@ class BackgroundTaskManager:
             
             return True
     
+    def validate_task_consistency(self, task_id: str) -> Dict[str, Any]:
+        """
+        Validate task state consistency for debugging.
+        
+        Args:
+            task_id: ID of the task to validate
+            
+        Returns:
+            Dictionary with validation results
+        """
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task:
+                return {"error": "Task not found"}
+            
+            validation = {
+                "task_id": task_id,
+                "status": task.status.value,
+                "progress": task.progress,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "started_at": task.started_at.isoformat() if task.started_at else None,
+                "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+                "chunk_count": getattr(task, 'chunk_count', None),
+                "error_message": task.error_message,
+                "inconsistencies": []
+            }
+            
+            # Check for inconsistencies
+            if task.progress >= 1.0 and task.status != ProcessingStatus.COMPLETED:
+                validation["inconsistencies"].append(f"Progress is {task.progress} but status is {task.status.value}")
+            
+            if task.status == ProcessingStatus.COMPLETED and task.progress < 1.0:
+                validation["inconsistencies"].append(f"Status is completed but progress is {task.progress}")
+            
+            if task.status == ProcessingStatus.COMPLETED and not task.completed_at:
+                validation["inconsistencies"].append("Status is completed but completed_at is not set")
+            
+            if task.status == ProcessingStatus.PROCESSING and task.completed_at:
+                validation["inconsistencies"].append("Status is processing but completed_at is set")
+            
+            return validation
+    
     def get_task_statistics(self) -> Dict[str, Any]:
         """
         Get statistics about task processing.
@@ -269,7 +322,8 @@ class BackgroundTaskManager:
                 "completed_tasks": 0,
                 "failed_tasks": 0,
                 "cancelled_tasks": 0,
-                "active_workers": self.max_workers
+                "active_workers": self.max_workers,
+                "inconsistent_tasks": 0
             }
             
             for task in self._tasks.values():
@@ -283,6 +337,11 @@ class BackgroundTaskManager:
                     stats["failed_tasks"] += 1
                 elif task.status == ProcessingStatus.CANCELLED:
                     stats["cancelled_tasks"] += 1
+                
+                # Check for inconsistencies
+                if (task.progress >= 1.0 and task.status != ProcessingStatus.COMPLETED) or \
+                   (task.status == ProcessingStatus.COMPLETED and task.progress < 1.0):
+                    stats["inconsistent_tasks"] += 1
             
             return stats
     
@@ -332,35 +391,31 @@ class BackgroundTaskManager:
                 task.status = ProcessingStatus.PROCESSING
                 task.started_at = datetime.now()
             
-            self._notify_progress(task_id, 0.1, "Starting document processing...")
-            
             # Check file size for progress estimation
             file_size = os.path.getsize(file_path)
             is_large_file = file_size > 5 * 1024 * 1024  # 5MB threshold
             
-            # Process document with progress updates
-            if is_large_file:
-                self._notify_progress(task_id, 0.2, "Processing large file...")
-            else:
-                self._notify_progress(task_id, 0.3, "Processing document...")
+            # Start document processing
+            self._notify_progress(task_id, 0.02, "开始处理文档...")
             
             # Check for cancellation during processing
             if task_id in self._cancelled_tasks:
                 return []
             
-            # Actual document processing
+            # Actual document processing with progress updates
+            self._notify_progress(task_id, 0.05, "解析文档内容...")
             chunks = self._document_processor.process_document(file_path, doc_type, task.document_id)
             
             # Check for cancellation after processing
             if task_id in self._cancelled_tasks:
                 return []
             
-            self._notify_progress(task_id, 0.6, f"Generated {len(chunks)} chunks")
+            self._notify_progress(task_id, 0.1, f"生成了 {len(chunks)} 个文档块")
             
             # Generate embeddings and store in vector database
             if chunks:
                 try:
-                    self._notify_progress(task_id, 0.7, "Generating embeddings...")
+                    self._notify_progress(task_id, 0.15, f"开始生成 {len(chunks)} 个向量...")
                     
                     # Import embedding service
                     from .embedding_service import get_embedding_service
@@ -370,55 +425,96 @@ class BackgroundTaskManager:
                         # Extract text content from chunks
                         texts = [chunk.content for chunk in chunks]
                         
-                        # Generate embeddings in batches
-                        embeddings = embedding_service.generate_embeddings_batch(texts)
+                        # Generate embeddings in batches with progress updates
+                        embedding_start_time = time.time()
+                        
+                        # Use larger batch size and more workers for better performance
+                        batch_size = 20  # Increase from default 10
+                        max_workers = 5   # Increase from default 3
+                        
+                        # Create a custom progress callback for embedding
+                        def embedding_progress_callback(current, total):
+                            progress = 0.1 + (current / total) * 0.5  # 0.1 to 0.6 (50% for embedding)
+                            self._notify_progress(task_id, progress, f"生成向量 ({current}/{total})")
+                        
+                        # Generate embeddings with optimized parameters and progress callback
+                        embeddings = embedding_service.generate_embeddings_batch(
+                            texts, 
+                            batch_size=batch_size, 
+                            max_workers=max_workers,
+                            progress_callback=embedding_progress_callback
+                        )
+                        embedding_time = time.time() - embedding_start_time
+                        
+                        print(f"⏱️ [任务管理器] Embedding生成耗时: {embedding_time:.2f}s")
                         
                         # Filter out failed embeddings
                         valid_chunks = []
                         valid_embeddings = []
-                        for chunk, embedding in zip(chunks, embeddings):
+                        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
                             if embedding is not None:
                                 valid_chunks.append(chunk)
                                 valid_embeddings.append(embedding)
+                            else:
+                                print(f"   ⚠️ [任务管理器] 块 {i} 的向量生成失败")
+                        
+                        print(f"✅ [任务管理器] 有效向量: {len(valid_embeddings)}/{len(chunks)}")
                         
                         if valid_embeddings:
-                            self._notify_progress(task_id, 0.8, f"Storing {len(valid_embeddings)} vectors...")
+                            self._notify_progress(task_id, 0.6, f"开始存储 {len(valid_embeddings)} 个向量...")
+                            print(f"💾 [任务管理器] 开始存储 {len(valid_embeddings)} 个向量到数据库")
                             
-                            # Store in vector database
+                            # Store in vector database with progress tracking
                             if hasattr(self, '_vector_store') and self._vector_store:
                                 # Use collection_id directly as collection name
                                 collection_name = task.collection_id
-                                self._vector_store.add_documents(collection_name, valid_chunks, valid_embeddings)
+                                store_start_time = time.time()
                                 
-                                self.logger.info(f"Stored {len(valid_embeddings)} vectors for task {task_id}")
+                                # Store with progress callback for large batches
+                                self._store_vectors_with_progress(
+                                    task_id, collection_name, valid_chunks, valid_embeddings
+                                )
+                                
+                                store_time = time.time() - store_start_time
+                                print(f"✅ [任务管理器] 向量存储完成，耗时: {store_time:.2f}s")
+                                self.logger.info(f"Stored {len(valid_embeddings)} vectors for task {task_id} in {store_time:.2f}s")
                             else:
+                                print(f"❌ [任务管理器] 向量存储不可用")
                                 self.logger.warning("Vector store not available, skipping vector storage")
                         else:
+                            print(f"❌ [任务管理器] 没有有效的向量，跳过存储")
                             self.logger.warning("No valid embeddings generated, skipping vector storage")
                     else:
+                        print(f"❌ [任务管理器] Embedding服务不可用")
                         self.logger.warning("Embedding service not available, skipping embedding generation")
                         
                 except Exception as e:
+                    print(f"❌ [任务管理器] 生成向量时发生异常: {e}")
+                    import traceback
+                    print(f"🔍 [任务管理器] 异常详情: {traceback.format_exc()}")
                     self.logger.error(f"Failed to generate embeddings for task {task_id}: {e}")
                     # Continue without embeddings - at least we have the chunks
             
+            # Final processing steps
+            self._notify_progress(task_id, 0.98, "完成最后处理...")
+            
             # Simulate additional processing time for large files
             if is_large_file:
-                time.sleep(0.5)  # Brief pause to simulate indexing
-                self._notify_progress(task_id, 0.9, "Finalizing...")
+                time.sleep(0.2)  # Brief pause to simulate indexing
             
-            # Mark task as completed
+            # Atomically update task completion status
             with self._lock:
+                task.chunk_count = len(chunks)
                 task.status = ProcessingStatus.COMPLETED
                 task.completed_at = datetime.now()
                 task.progress = 1.0
+                
+                # Log the status change for debugging
+                self.logger.info(f"Task {task_id} status updated to COMPLETED with {len(chunks)} chunks")
             
-            # Store chunk count in task for callback
-            with self._lock:
-                task.chunk_count = len(chunks)
-            
-            self._notify_progress(task_id, 1.0, f"Processing completed: {len(chunks)} chunks generated")
-            self.logger.info(f"Task {task_id} completed successfully with {len(chunks)} chunks")
+            # Final completion notification
+            self._notify_progress(task_id, 1.0, f"处理完成: 生成了 {len(chunks)} 个文档块")
+            self.logger.info(f"Task {task_id} completion notification sent")
             
             return chunks
             
@@ -434,6 +530,52 @@ class BackgroundTaskManager:
             
             return []
     
+    def _store_vectors_with_progress(self, task_id: str, collection_name: str, 
+                                   chunks: List, embeddings: List[List[float]]):
+        """Store vectors in batches with progress updates."""
+        total_vectors = len(embeddings)
+        batch_size = 100  # Store in batches of 100 vectors
+        
+        print(f"📦 [任务管理器] 分批存储向量: {total_vectors} 个向量，批次大小: {batch_size}")
+        
+        for i in range(0, total_vectors, batch_size):
+            # Check for cancellation
+            if task_id in self._cancelled_tasks:
+                return
+            
+            end_idx = min(i + batch_size, total_vectors)
+            batch_chunks = chunks[i:end_idx]
+            batch_embeddings = embeddings[i:end_idx]
+            
+            # Calculate progress (60% to 98% for storage)
+            batch_progress = i / total_vectors
+            progress = 0.6 + batch_progress * 0.38  # 0.6 to 0.98
+            
+            self._notify_progress(
+                task_id, 
+                progress, 
+                f"存储向量 ({i+1}-{end_idx}/{total_vectors})"
+            )
+            
+            print(f"💾 [任务管理器] 存储批次 {i//batch_size + 1}: 向量 {i+1}-{end_idx}")
+            
+            try:
+                # Store this batch
+                self._vector_store.add_documents(collection_name, batch_chunks, batch_embeddings)
+                
+                # Small delay for large batches to avoid overwhelming the database
+                if len(batch_embeddings) >= 50:
+                    time.sleep(0.1)
+                    
+            except Exception as e:
+                print(f"❌ [任务管理器] 存储批次失败: {e}")
+                self.logger.error(f"Failed to store batch {i//batch_size + 1}: {e}")
+                raise
+        
+        # Final storage progress
+        self._notify_progress(task_id, 0.98, f"向量存储完成: {total_vectors} 个向量")
+        print(f"✅ [任务管理器] 所有向量存储完成: {total_vectors} 个")
+    
     def _notify_progress(self, task_id: str, progress: float, message: str = ""):
         """
         Notify all registered callbacks about task progress.
@@ -447,12 +589,24 @@ class BackgroundTaskManager:
             # Update task progress
             task = self._tasks.get(task_id)
             if task:
-                task.progress = progress
+                # Only update progress if it's actually increasing or if it's completion
+                if progress > task.progress or progress >= 1.0:
+                    task.progress = progress
+                    
+                    # Log progress for debugging
+                    self.logger.debug(f"Task {task_id} progress updated: {progress:.2f} ({task.status.value}) - {message}")
+                else:
+                    # Don't update progress if it's going backwards
+                    self.logger.debug(f"Task {task_id} progress not updated (would go backwards): {progress:.2f} -> {task.progress:.2f}")
+                    return
             
             # Notify callbacks
             callbacks = self._progress_callbacks.get(task_id, [])
             for callback in callbacks:
-                callback.update(progress, message)
+                try:
+                    callback.update(progress, message)
+                except Exception as e:
+                    self.logger.error(f"Error in progress callback for task {task_id}: {e}")
     
     def _start_cleanup_thread(self):
         """Start the automatic cleanup thread."""

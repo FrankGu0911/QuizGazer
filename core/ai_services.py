@@ -638,6 +638,133 @@ def search_knowledge_preview(query, collections=None, top_k=3):
         logging.error(f"Error searching knowledge base: {e}")
         return []
 
+def sync_knowledge_base_metadata():
+    """
+    Sync knowledge base metadata from remote ChromaDB.
+    
+    Returns:
+        bool: True if sync was successful, False otherwise
+    """
+    print("🔄 [AI服务] 开始同步知识库元数据...")
+    
+    if not is_knowledge_base_available():
+        print("❌ [AI服务] 知识库不可用，无法同步元数据")
+        return False
+    
+    try:
+        print("🔧 [AI服务] 获取知识库管理器实例...")
+        kb_manager = get_knowledge_base_manager()
+        
+        print("⚡ [AI服务] 调用元数据同步方法...")
+        success = kb_manager.sync_metadata_from_remote()
+        
+        if success:
+            print("✅ [AI服务] 知识库元数据同步成功")
+        else:
+            print("❌ [AI服务] 知识库元数据同步失败")
+        
+        return success
+    except Exception as e:
+        print(f"❌ [AI服务] 同步知识库元数据时发生错误: {e}")
+        import traceback
+        print(f"🔍 [AI服务] 错误详情: {traceback.format_exc()}")
+        logging.error(f"Error syncing knowledge base metadata: {e}")
+        return False
+
+def refresh_knowledge_base():
+    """
+    刷新知识库数据（不需要重启应用）
+    
+    Returns:
+        dict: 刷新结果和统计信息
+    """
+    print("🔄 [AI服务] 刷新知识库数据...")
+    
+    result = {
+        "success": False,
+        "message": "",
+        "stats_before": {},
+        "stats_after": {},
+        "changes": {}
+    }
+    
+    try:
+        # 获取刷新前的统计信息
+        result["stats_before"] = get_knowledge_base_statistics()
+        
+        # 执行同步
+        sync_success = sync_knowledge_base_metadata()
+        
+        if sync_success:
+            # 获取刷新后的统计信息
+            result["stats_after"] = get_knowledge_base_statistics()
+            
+            # 计算变化
+            before = result["stats_before"]
+            after = result["stats_after"]
+            
+            if "error" not in before and "error" not in after:
+                result["changes"] = {
+                    "collections": after.get("total_collections", 0) - before.get("total_collections", 0),
+                    "documents": after.get("total_documents", 0) - before.get("total_documents", 0),
+                    "chunks": after.get("total_chunks", 0) - before.get("total_chunks", 0)
+                }
+            
+            result["success"] = True
+            result["message"] = "知识库数据刷新成功"
+            print("✅ [AI服务] 知识库数据刷新完成")
+        else:
+            result["message"] = "知识库元数据同步失败"
+            print("❌ [AI服务] 知识库数据刷新失败")
+        
+        return result
+        
+    except Exception as e:
+        result["message"] = f"刷新过程中发生错误: {str(e)}"
+        print(f"❌ [AI服务] 刷新知识库时发生错误: {e}")
+        logging.error(f"Error refreshing knowledge base: {e}")
+        return result
+
+def debug_task_status(task_id: str):
+    """
+    调试任务状态，检查是否存在不一致问题
+    
+    Args:
+        task_id: 任务ID
+        
+    Returns:
+        dict: 任务状态调试信息
+    """
+    print(f"🔍 [AI服务] 调试任务状态: {task_id}")
+    
+    if not is_knowledge_base_available():
+        return {"error": "Knowledge base not available"}
+    
+    try:
+        kb_manager = get_knowledge_base_manager()
+        if hasattr(kb_manager, 'task_manager'):
+            validation = kb_manager.task_manager.validate_task_consistency(task_id)
+            
+            print(f"📊 [AI服务] 任务状态调试结果:")
+            print(f"   - 状态: {validation.get('status')}")
+            print(f"   - 进度: {validation.get('progress')}")
+            print(f"   - 块数量: {validation.get('chunk_count')}")
+            
+            if validation.get('inconsistencies'):
+                print(f"⚠️ [AI服务] 发现不一致问题:")
+                for issue in validation['inconsistencies']:
+                    print(f"     - {issue}")
+            else:
+                print(f"✅ [AI服务] 任务状态一致")
+            
+            return validation
+        else:
+            return {"error": "Task manager not available"}
+    except Exception as e:
+        print(f"❌ [AI服务] 调试任务状态时发生错误: {e}")
+        logging.error(f"Error debugging task status: {e}")
+        return {"error": str(e)}
+
 def get_knowledge_base_statistics():
     """
     Get knowledge base statistics.
@@ -650,7 +777,18 @@ def get_knowledge_base_statistics():
     
     try:
         kb_manager = get_knowledge_base_manager()
-        return kb_manager.get_knowledge_base_stats()
+        stats = kb_manager.get_knowledge_base_stats()
+        
+        # Add task statistics if available
+        if hasattr(kb_manager, 'task_manager'):
+            task_stats = kb_manager.task_manager.get_task_statistics()
+            stats["task_statistics"] = task_stats
+            
+            # Highlight any inconsistent tasks
+            if task_stats.get("inconsistent_tasks", 0) > 0:
+                print(f"⚠️ [AI服务] 发现 {task_stats['inconsistent_tasks']} 个状态不一致的任务")
+        
+        return stats
     except Exception as e:
         logging.error(f"Error getting knowledge base statistics: {e}")
         return {"error": str(e)}

@@ -77,12 +77,16 @@ class EmbeddingService:
             }
             
             # Make API request
-            self.logger.debug(f"Generating embedding for text: {text[:50]}...")
+            text_preview = text[:100] + "..." if len(text) > 100 else text
+            self.logger.debug(f"Generating embedding for text: {text_preview}")
+            
+            request_start = time.time()
             response = self.session.post(
                 self.config['endpoint'],
                 json=data,
                 timeout=self.config.get('timeout', 30)
             )
+            request_time = time.time() - request_start
             
             response.raise_for_status()
             result = response.json()
@@ -90,7 +94,7 @@ class EmbeddingService:
             # Extract embedding from response
             if 'data' in result and len(result['data']) > 0:
                 embedding = result['data'][0].get('embedding', [])
-                self.logger.debug(f"Generated embedding with {len(embedding)} dimensions")
+                self.logger.debug(f"Generated embedding with {len(embedding)} dimensions in {request_time:.2f}s")
                 
                 # Cache the embedding
                 if self.cache and embedding:
@@ -99,16 +103,23 @@ class EmbeddingService:
                 return embedding
             else:
                 self.logger.error(f"Invalid embedding API response format: {result}")
+                print(f"❌ [Embedding] API响应格式错误: {result}")
                 return None
                 
+        except requests.exceptions.Timeout as e:
+            self.logger.error(f"Embedding API request timeout: {e}")
+            print(f"⏰ [Embedding] API请求超时: {e}")
+            return None
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Embedding API request failed: {e}")
+            print(f"🌐 [Embedding] API请求失败: {e}")
             return None
         except Exception as e:
             self.logger.error(f"Failed to generate embedding: {e}")
+            print(f"❌ [Embedding] 生成向量失败: {e}")
             return None
     
-    def generate_embeddings_batch(self, texts: List[str], batch_size: int = 10, max_workers: int = 3) -> List[Optional[List[float]]]:
+    def generate_embeddings_batch(self, texts: List[str], batch_size: int = 10, max_workers: int = 3, progress_callback=None) -> List[Optional[List[float]]]:
         """Generate embeddings for multiple texts in batches."""
         if not texts:
             return []
@@ -117,14 +128,24 @@ class EmbeddingService:
             self.logger.error("Embedding service not available")
             return [None] * len(texts)
         
+        print(f"🔤 [Embedding] 开始生成 {len(texts)} 个文本的向量")
+        print(f"   - 批次大小: {batch_size}")
+        print(f"   - 并发数: {max_workers}")
+        print(f"   - API端点: {self.config.get('endpoint', 'N/A')}")
+        print(f"   - 模型: {self.config.get('model', 'N/A')}")
+        
         embeddings = [None] * len(texts)
+        total_batches = (len(texts) + batch_size - 1) // batch_size
+        start_time = time.time()
         
         # Process in batches to avoid overwhelming the API
         for i in range(0, len(texts), batch_size):
             batch_texts = texts[i:i + batch_size]
             batch_indices = list(range(i, min(i + batch_size, len(texts))))
+            batch_num = i // batch_size + 1
             
-            self.logger.debug(f"Processing embedding batch {i//batch_size + 1}/{(len(texts) + batch_size - 1)//batch_size}")
+            print(f"📦 [Embedding] 处理批次 {batch_num}/{total_batches} ({len(batch_texts)} 个文本)")
+            batch_start_time = time.time()
             
             # Use thread pool for concurrent requests within batch
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -135,23 +156,45 @@ class EmbeddingService:
                 }
                 
                 # Collect results
+                batch_successful = 0
                 for future in as_completed(future_to_index):
                     idx, text = future_to_index[future]
                     try:
                         embedding = future.result()
                         embeddings[idx] = embedding
-                        if embedding is None:
+                        if embedding is not None:
+                            batch_successful += 1
+                        else:
+                            print(f"   ⚠️ [Embedding] 索引 {idx} 生成失败")
                             self.logger.warning(f"Failed to generate embedding for text at index {idx}")
                     except Exception as e:
+                        print(f"   ❌ [Embedding] 索引 {idx} 异常: {e}")
                         self.logger.error(f"Exception generating embedding for text at index {idx}: {e}")
                         embeddings[idx] = None
             
+            batch_time = time.time() - batch_start_time
+            print(f"   ✅ [Embedding] 批次 {batch_num} 完成: {batch_successful}/{len(batch_texts)} 成功 (耗时: {batch_time:.2f}s)")
+            
+            # Call progress callback if provided
+            if progress_callback:
+                completed_count = min(i + batch_size, len(texts))
+                progress_callback(completed_count, len(texts))
+            
             # Add delay between batches to respect rate limits
             if i + batch_size < len(texts):
-                time.sleep(0.5)
+                delay = 0.2  # Reduce delay from 0.5s to 0.2s
+                print(f"   ⏳ [Embedding] 等待 {delay}s 避免API限流...")
+                time.sleep(delay)
         
+        total_time = time.time() - start_time
         successful_count = sum(1 for e in embeddings if e is not None)
-        self.logger.info(f"Generated {successful_count}/{len(texts)} embeddings successfully")
+        print(f"🎉 [Embedding] 全部完成: {successful_count}/{len(texts)} 成功 (总耗时: {total_time:.2f}s)")
+        
+        if successful_count < len(texts):
+            failed_count = len(texts) - successful_count
+            print(f"⚠️ [Embedding] {failed_count} 个文本生成失败")
+        
+        self.logger.info(f"Generated {successful_count}/{len(texts)} embeddings successfully in {total_time:.2f}s")
         
         return embeddings
     
