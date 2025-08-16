@@ -14,6 +14,22 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QFont, QPixmap
 
+# Import checkbox utilities for robust state handling
+try:
+    from utils.checkbox_utils import CheckboxStateHandler, is_checkbox_checked
+except ImportError:
+    # Fallback if utils not available
+    class CheckboxStateHandler:
+        @staticmethod
+        def is_checked_safe(checkbox):
+            try:
+                return checkbox.isChecked()
+            except:
+                return False
+    
+    def is_checkbox_checked(checkbox):
+        return CheckboxStateHandler.is_checked_safe(checkbox)
+
 # Import configuration and AI services
 try:
     sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -577,19 +593,31 @@ Reranker API用于对搜索结果进行重新排序，提高搜索结果的相�
             QMessageBox.warning(self, "错误", f"加载设置失败: {e}")
     
     def on_kb_enable_changed(self):
-        """Handle knowledge base enable/disable change."""
+        """
+        Handle knowledge base enable/disable change.
+        使用健壮的状态检查方式，避免跨平台兼容性问题
+        """
         print("🔄 [知识库设置] 启用知识库勾选框状态变化")
-        enabled = self.enable_kb_checkbox.isChecked()
+        
+        # 使用健壮的复选框状态检查工具
+        enabled = is_checkbox_checked(self.enable_kb_checkbox)
         print(f"📋 [知识库设置] 新状态: {'启用' if enabled else '禁用'}")
         
         # Enable/disable other tabs
         print("🔧 [知识库设置] 更新其他标签页的启用状态...")
-        for i in range(1, self.tab_widget.count()):
-            self.tab_widget.setTabEnabled(i, enabled)
-            print(f"   - 标签页 {i}: {'启用' if enabled else '禁用'}")
+        try:
+            for i in range(1, self.tab_widget.count()):
+                self.tab_widget.setTabEnabled(i, enabled)
+                print(f"   - 标签页 {i}: {'启用' if enabled else '禁用'}")
+        except Exception as e:
+            print(f"⚠️ [知识库设置] 更新标签页状态失败: {e}")
         
         print("📊 [知识库设置] 更新状态显示...")
-        self.update_status()
+        try:
+            self.update_status()
+        except Exception as e:
+            print(f"⚠️ [知识库设置] 更新状态显示失败: {e}")
+        
         print("✅ [知识库设置] 勾选框状态变化处理完成")
     
     def on_connection_type_changed(self):

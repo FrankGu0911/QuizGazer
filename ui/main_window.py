@@ -11,6 +11,17 @@ from PySide6.QtGui import QIcon, QClipboard
 from core.screenshot_handler import take_screenshot, get_available_screens
 from utils.config_manager import get_app_config, save_app_config
 from core.ai_services import get_question_from_image, get_answer_from_text, get_direct_answer_from_image
+
+# Import checkbox utilities for robust state handling
+try:
+    from utils.checkbox_utils import is_checkbox_checked
+except ImportError:
+    # Fallback if utils not available
+    def is_checkbox_checked(checkbox):
+        try:
+            return checkbox.isChecked()
+        except:
+            return False
 # Try to import full knowledge base components, fallback to simplified versions
 try:
     from ui.knowledge_base_panel import KnowledgeBasePanel
@@ -539,13 +550,16 @@ class MainWindow(QMainWindow):
         if not screenshot_bytes:
             return
 
-        # 检查是否使用直接模式
-        if self.direct_mode_checkbox.isChecked():
+        # 检查是否使用直接模式 - 使用健壮的状态检查
+        direct_mode = is_checkbox_checked(self.direct_mode_checkbox)
+        
+        if direct_mode:
             # 直接模式：一步到位获取答案
             self.question_input.setPlainText("正在直接分析图片并获取答案...")
             self.answer_display.setText("Please wait...")
 
-            force_search = self.force_search_checkbox.isChecked()
+            force_search = is_checkbox_checked(self.force_search_checkbox)
+            
             worker = Worker(get_direct_answer_from_image, screenshot_bytes, force_search=force_search)
             worker.signals.result.connect(self.on_direct_answer_ready)
             worker.signals.error.connect(self.on_ai_error)
@@ -632,7 +646,8 @@ class MainWindow(QMainWindow):
             return
         self.answer_display.setText("Getting answer...")
         
-        force_search = self.force_search_checkbox.isChecked()
+        force_search = is_checkbox_checked(self.force_search_checkbox)
+        
         worker = Worker(get_answer_from_text, question, force_search=force_search)
         worker.signals.result.connect(self.on_answer_ready)
         worker.signals.error.connect(self.on_ai_error)
@@ -646,7 +661,8 @@ class MainWindow(QMainWindow):
             
         self.answer_display.setText("Getting new answer...")
         
-        force_search = self.force_search_checkbox.isChecked()
+        force_search = is_checkbox_checked(self.force_search_checkbox)
+        
         worker = Worker(get_answer_from_text, question, force_search=force_search)
         worker.signals.result.connect(self.on_answer_ready)
         worker.signals.error.connect(self.on_ai_error)
