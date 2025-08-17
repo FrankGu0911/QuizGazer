@@ -190,13 +190,13 @@ class RAGPipeline:
             knowledge_context = knowledge_context[:self.max_context_length] + "\n\n[内容已截断...]"
             print(f"✂️ [RAG管道] 知识上下文被截断: {original_context_length} -> {len(knowledge_context)} 字符")
         
-        enhanced_prompt = f"""基于以下知识内容回答问题：
+        enhanced_prompt = f"""基于以下知识内容回答问题，请专注于问题本身，忽略例如题号等其他无关信息：
 
 {knowledge_context}
 
 问题：{original_query}
 
-请基于上述知识内容提供准确、详细的回答。如果知识内容中没有相关信息，请明确说明并提供你的一般性回答。请在回答中引用相关的知识来源。"""
+请基于上述知识内容提供准确、详细的回答。如果知识内容中没有相关信息，可以使用搜索工具寻找答案，请明确说明并提供你的一般性回答。请在回答中引用相关的知识来源。"""
         
         print(f"✅ [RAG管道] 增强提示词构建完成，总长度: {len(enhanced_prompt)} 字符")
         return enhanced_prompt
