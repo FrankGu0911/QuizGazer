@@ -1,6 +1,26 @@
 import configparser
 import os
 from typing import Dict, Optional, Any
+import sys
+
+def get_config_path() -> str:
+    """
+    获取 config.ini 的绝对路径，智能适应开发环境和 PyInstaller 打包环境。
+    - 在打包后的 .exe 环境中，它会寻找与 .exe同目录的 config.ini。
+    - 在开发环境中（直接运行 .py），它会根据您原来的逻辑，寻找上级目录的 config.ini。
+    """
+    if getattr(sys, 'frozen', False):
+        # 如果是 PyInstaller 打包的 .exe
+        # sys.executable 是 .exe 文件的绝对路径
+        base_path = os.path.dirname(sys.executable)
+        # 假设 config.ini 与 exe 文件在同一目录下
+        return os.path.join(base_path, 'config.ini')
+    else:
+        # 如果是直接运行 .py 文件
+        # __file__ 是当前脚本的绝对路径
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # 沿用您原来的逻辑，配置文件在上一级目录
+        return os.path.abspath(os.path.join(script_dir, '..', 'config.ini'))
 
 def get_app_config():
     """
@@ -10,7 +30,7 @@ def get_app_config():
         dict: A dictionary containing application configuration details.
     """
     config = configparser.ConfigParser()
-    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
+    config_path = get_config_path()
     
     if not os.path.exists(config_path):
         print(f"Error: config.ini not found at {config_path}")
@@ -36,7 +56,7 @@ def save_app_config(config_data):
         config_data (dict): A dictionary containing application configuration details.
     """
     config = configparser.ConfigParser()
-    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
+    config_path = get_config_path()
     
     if os.path.exists(config_path):
         config.read(config_path)
@@ -67,7 +87,7 @@ def get_model_config(service_type):
         raise ValueError("service_type must be either 'vlm' or 'llm'")
 
     config = configparser.ConfigParser()
-    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
+    config_path = get_config_path()
     
     if not os.path.exists(config_path):
         print(f"Error: config.ini not found at {config_path}")
@@ -127,7 +147,7 @@ def get_knowledge_base_config() -> Optional[Dict[str, Any]]:
               Returns None if the section is not found.
     """
     config = configparser.ConfigParser()
-    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
+    config_path = get_config_path()
     
     if not os.path.exists(config_path):
         print(f"Error: config.ini not found at {config_path}")
@@ -169,7 +189,7 @@ def get_chromadb_config() -> Optional[Dict[str, Any]]:
               Returns None if the section is not found.
     """
     config = configparser.ConfigParser()
-    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
+    config_path = get_config_path()
     
     if not os.path.exists(config_path):
         print(f"Error: config.ini not found at {config_path}")
@@ -227,7 +247,7 @@ def get_api_config(api_type: str) -> Optional[Dict[str, Any]]:
         raise ValueError("api_type must be either 'embedding_api' or 'reranker_api'")
     
     config = configparser.ConfigParser()
-    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
+    config_path = get_config_path()
     
     if not os.path.exists(config_path):
         print(f"Error: config.ini not found at {config_path}")
@@ -295,7 +315,7 @@ def save_knowledge_base_config(config_data: Dict[str, Any]):
     print(f"📝 [配置管理器] 接收到的配置数据: {config_data}")
     
     config = configparser.ConfigParser()
-    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
+    config_path = get_config_path()
     print(f"📂 [配置管理器] 配置文件路径: {config_path}")
     
     if os.path.exists(config_path):
@@ -338,7 +358,7 @@ def save_chromadb_config(config_data: Dict[str, Any]):
         config_data (dict): A dictionary containing ChromaDB configuration details.
     """
     config = configparser.ConfigParser()
-    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
+    config_path = get_config_path()
     
     if os.path.exists(config_path):
         config.read(config_path)
@@ -390,7 +410,7 @@ def save_api_config(api_type: str, config_data: Dict[str, Any]):
         raise ValueError("api_type must be either 'embedding_api' or 'reranker_api'")
     
     config = configparser.ConfigParser()
-    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
+    config_path = get_config_path()
     
     if os.path.exists(config_path):
         config.read(config_path)
