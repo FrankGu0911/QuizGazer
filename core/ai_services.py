@@ -798,3 +798,71 @@ try:
     initialize_knowledge_base()
 except Exception as e:
     logging.error(f"Failed to initialize knowledge base on module import: {e}")
+
+
+# 历史记录上传功能
+async def upload_quiz_record(image_bytes, question_text, answer_text,
+                           ocr_time, answer_time, model_info):
+    """
+    上传测验记录到后端服务器
+
+    Args:
+        image_bytes: 图片数据
+        question_text: 识别的题目文本
+        answer_text: 生成的答案文本
+        ocr_time: OCR 处理时间
+        answer_time: 答案生成时间
+        model_info: 模型信息字典
+
+    Returns:
+        bool: 上传是否成功
+    """
+    try:
+        # 获取后端配置
+        from utils.config_manager import get_backend_config
+        backend_config = get_backend_config()
+        
+        if not backend_config.get('enable_history', False):
+            print("📝 [历史记录] 历史记录功能未启用，跳过上传")
+            return True  # 如果未启用历史记录，直接返回成功
+
+        base_url = backend_config.get('base_url', 'http://localhost:8000')
+        user_id = backend_config.get('user_id', '')
+
+        print(f"📤 [历史记录] 开始上传到 {base_url}")
+
+        # 创建 multipart form data
+        files = {
+            'image': ('quiz_screenshot.png', image_bytes, 'image/png'),
+        }
+
+        from datetime import datetime
+        data = {
+            'question_text': question_text,
+            'answer_text': answer_text,
+            'vlm_model': model_info.get('vlm_model', ''),
+            'llm_model': model_info.get('llm_model', ''),
+            'ocr_time': str(ocr_time),
+            'answer_time': str(answer_time),
+            'user_id': user_id,
+            'session_id': f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        }
+
+        # 异步上传
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                f"{base_url}/api/quiz/record-with-image",
+                files=files,
+                data=data
+            )
+
+            if response.status_code == 200:
+                print("✅ [历史记录] 上传成功")
+                return True
+            else:
+                print(f"❌ [历史记录] 上传失败: {response.status_code} - {response.text}")
+                return False
+
+    except Exception as e:
+        print(f"❌ [历史记录] 上传时发生错误: {str(e)}")
+        return False

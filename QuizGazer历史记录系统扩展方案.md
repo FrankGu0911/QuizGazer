@@ -12,6 +12,7 @@
 - **ORM**: SQLAlchemy
 - **数据库迁移**: Alembic
 - **异步支持**: asyncio + asyncpg
+- **实时通信**: WebSocket (实时推送新记录)
 
 ### 前端
 - **框架**: Vue.js 3
@@ -30,10 +31,11 @@
 ┌─────────────────┐    HTTP API     ┌─────────────────┐    HTTP     ┌─────────────────┐
 │   QuizGazer     │ ────────────────▶│   FastAPI       │ ─────────────▶│   Vue.js 前端   │
 │   (客户端)       │                 │   后端服务        │               │   (历史记录界面)   │
-│                 │                 │                 │               │                 │
-│ • OCR识别       │                 │ • RESTful API   │               │ • 时间线展示     │
+│                 │    WebSocket    │                 │   WebSocket   │                 │
+│ • OCR识别       │ ◄──────────────▶│ • RESTful API   │ ◄─────────────│ • 时间线展示     │
 │ • 大模型解答     │                 │ • 数据验证       │               │ • 搜索过滤       │
 │ • 历史记录上传   │                 │ • 文件存储       │               │ • 批量选择导出   │
+│ • 实时推送      │                 │ • WebSocket服务  │               │ • 实时更新       │
 └─────────────────┘                 └─────────────────┘               └─────────────────┘
                                              │
                                              ▼
@@ -63,6 +65,7 @@ backend/
 │       ├── __init__.py
 │       ├── quiz.py             # 测验记录相关 API
 │       ├── stats.py            # 统计信息 API
+│       ├── websocket.py        # WebSocket 实时通信 API
 │       └── health.py           # 健康检查 API
 ├── core/
 │   ├── __init__.py
@@ -72,7 +75,8 @@ backend/
 │   ├── __init__.py
 │   ├── quiz_service.py         # 测验记录业务逻辑
 │   ├── stats_service.py        # 统计服务业务逻辑
-│   └── export_service.py       # 导出服务业务逻辑
+│   ├── export_service.py       # 导出服务业务逻辑
+│   └── websocket_service.py    # WebSocket 连接管理服务
 ├── requirements.txt            # Python 依赖
 ├── alembic.ini                 # 数据库迁移配置
 └── alembic/                    # 数据库迁移脚本
@@ -499,7 +503,367 @@ class ExportService:
             print(f"清理导出文件时出错: {str(e)}")
 ```
 
-### 1.3 API 接口设计 (`api/endpoints/quiz.py`)
+#### 1.3 WebSocket 连接管理服务 (`services/websocket_service.py`)
+
+```python
+import json
+import asyncio
+from typing import Dict, Set, Optional
+from fastapi import WebSocket, WebSocketDisconnect
+from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
+
+class ConnectionManager:
+    """WebSocket 连接管理器"""
+    
+    def __init__(self):
+        # 存储活跃的WebSocket连接
+        self.active_connections: Dict[str, WebSocket] = {}
+        # 按用户ID分组的连接
+        self.user_connections: Dict[str, Set[str]] = {}
+        # 连接元数据
+        self.connection_metadata: Dict[str, dict] = {}
+    
+    async def connect(self, websocket: WebSocket, connection_id: str, user_id: Optional[str] = None):
+        """接受新的WebSocket连接"""
+        await websocket.accept()
+        
+        # 存储连接
+        self.active_connections[connection_id] = websocket
+        self.connection_metadata[connection_id] = {
+            'user_id': user_id,
+            'connected_at': datetime.now(),
+            'last_ping': datetime.now()
+        }
+        
+        # 按用户分组
+        if user_id:
+            if user_id not in self.user_connections:
+                self.user_connections[user_id] = set()
+            self.user_connections[user_id].add(connection_id)
+        
+        logger.info(f"WebSocket连接已建立: {connection_id} (用户: {user_id})")
+        
+        # 发送连接确认消息
+        await self.send_personal_message({
+            'type': 'connection_established',
+            'connection_id': connection_id,
+            'timestamp': datetime.now().isoformat()
+        }, connection_id)
+    
+    def disconnect(self, connection_id: str):
+        """断开WebSocket连接"""
+        if connection_id in self.active_connections:
+            # 获取用户ID
+            user_id = self.connection_metadata.get(connection_id, {}).get('user_id')
+            
+            # 从连接池中移除
+            del self.active_connections[connection_id]
+            del self.connection_metadata[connection_id]
+            
+            # 从用户分组中移除
+            if user_id and user_id in self.user_connections:
+                self.user_connections[user_id].discard(connection_id)
+                if not self.user_connections[user_id]:
+                    del self.user_connections[user_id]
+            
+            logger.info(f"WebSocket连接已断开: {connection_id} (用户: {user_id})")
+    
+    async def send_personal_message(self, message: dict, connection_id: str):
+        """发送消息给特定连接"""
+        if connection_id in self.active_connections:
+            try:
+                websocket = self.active_connections[connection_id]
+                await websocket.send_text(json.dumps(message, ensure_ascii=False))
+                return True
+            except Exception as e:
+                logger.error(f"发送消息失败 {connection_id}: {str(e)}")
+                # 连接可能已断开，清理连接
+                self.disconnect(connection_id)
+                return False
+        return False
+    
+    async def send_to_user(self, message: dict, user_id: str):
+        """发送消息给特定用户的所有连接"""
+        if user_id in self.user_connections:
+            connection_ids = list(self.user_connections[user_id])
+            success_count = 0
+            
+            for connection_id in connection_ids:
+                if await self.send_personal_message(message, connection_id):
+                    success_count += 1
+            
+            return success_count
+        return 0
+    
+    async def broadcast(self, message: dict, exclude_connections: Set[str] = None):
+        """广播消息给所有连接"""
+        if exclude_connections is None:
+            exclude_connections = set()
+        
+        connection_ids = [
+            conn_id for conn_id in self.active_connections.keys()
+            if conn_id not in exclude_connections
+        ]
+        
+        success_count = 0
+        for connection_id in connection_ids:
+            if await self.send_personal_message(message, connection_id):
+                success_count += 1
+        
+        return success_count
+    
+    async def broadcast_new_quiz_record(self, quiz_record: dict, exclude_user_id: Optional[str] = None):
+        """广播新的测验记录"""
+        message = {
+            'type': 'new_quiz_record',
+            'data': quiz_record,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # 排除发送者的连接
+        exclude_connections = set()
+        if exclude_user_id and exclude_user_id in self.user_connections:
+            exclude_connections = self.user_connections[exclude_user_id]
+        
+        success_count = await self.broadcast(message, exclude_connections)
+        logger.info(f"新测验记录已广播给 {success_count} 个连接")
+        return success_count
+    
+    async def broadcast_stats_update(self, stats: dict):
+        """广播统计信息更新"""
+        message = {
+            'type': 'stats_update',
+            'data': stats,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        success_count = await self.broadcast(message)
+        logger.info(f"统计信息更新已广播给 {success_count} 个连接")
+        return success_count
+    
+    def get_connection_count(self) -> int:
+        """获取活跃连接数"""
+        return len(self.active_connections)
+    
+    def get_user_count(self) -> int:
+        """获取在线用户数"""
+        return len(self.user_connections)
+    
+    def get_connections_info(self) -> dict:
+        """获取连接信息"""
+        return {
+            'total_connections': self.get_connection_count(),
+            'total_users': self.get_user_count(),
+            'connections': [
+                {
+                    'connection_id': conn_id,
+                    'user_id': metadata.get('user_id'),
+                    'connected_at': metadata.get('connected_at').isoformat(),
+                    'last_ping': metadata.get('last_ping').isoformat()
+                }
+                for conn_id, metadata in self.connection_metadata.items()
+            ]
+        }
+    
+    async def ping_all_connections(self):
+        """向所有连接发送心跳包"""
+        ping_message = {
+            'type': 'ping',
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # 更新最后ping时间
+        current_time = datetime.now()
+        for conn_id in self.active_connections.keys():
+            if conn_id in self.connection_metadata:
+                self.connection_metadata[conn_id]['last_ping'] = current_time
+        
+        return await self.broadcast(ping_message)
+
+# 全局连接管理器实例
+connection_manager = ConnectionManager()
+
+class WebSocketService:
+    """WebSocket 服务类"""
+    
+    def __init__(self):
+        self.manager = connection_manager
+    
+    async def handle_client_message(self, websocket: WebSocket, connection_id: str, message: dict):
+        """处理客户端消息"""
+        try:
+            message_type = message.get('type')
+            
+            if message_type == 'pong':
+                # 处理心跳响应
+                if connection_id in self.manager.connection_metadata:
+                    self.manager.connection_metadata[connection_id]['last_ping'] = datetime.now()
+            
+            elif message_type == 'subscribe_user':
+                # 订阅特定用户的更新
+                user_id = message.get('user_id')
+                if user_id and connection_id in self.manager.connection_metadata:
+                    self.manager.connection_metadata[connection_id]['subscribed_user'] = user_id
+                    
+                    await self.manager.send_personal_message({
+                        'type': 'subscription_confirmed',
+                        'user_id': user_id,
+                        'timestamp': datetime.now().isoformat()
+                    }, connection_id)
+            
+            elif message_type == 'get_stats':
+                # 请求统计信息
+                from services.stats_service import StatsService
+                from database import get_db
+                
+                # 这里需要获取数据库会话，实际实现中可能需要调整
+                stats = await StatsService().get_realtime_stats()
+                await self.manager.send_personal_message({
+                    'type': 'stats_response',
+                    'data': stats,
+                    'timestamp': datetime.now().isoformat()
+                }, connection_id)
+            
+            else:
+                logger.warning(f"未知消息类型: {message_type}")
+        
+        except Exception as e:
+            logger.error(f"处理客户端消息时出错: {str(e)}")
+            await self.manager.send_personal_message({
+                'type': 'error',
+                'message': '消息处理失败',
+                'timestamp': datetime.now().isoformat()
+            }, connection_id)
+
+# 全局WebSocket服务实例
+websocket_service = WebSocketService()
+
+# 定期清理断开的连接
+async def cleanup_disconnected_connections():
+    """定期清理断开的连接"""
+    while True:
+        try:
+            current_time = datetime.now()
+            timeout_seconds = 300  # 5分钟超时
+            
+            disconnected_connections = []
+            
+            for conn_id, metadata in connection_manager.connection_metadata.items():
+                last_ping = metadata.get('last_ping')
+                if last_ping and (current_time - last_ping).seconds > timeout_seconds:
+                    disconnected_connections.append(conn_id)
+            
+            for conn_id in disconnected_connections:
+                logger.info(f"清理超时连接: {conn_id}")
+                connection_manager.disconnect(conn_id)
+            
+            # 每分钟检查一次
+            await asyncio.sleep(60)
+            
+        except Exception as e:
+            logger.error(f"清理连接时出错: {str(e)}")
+            await asyncio.sleep(60)
+```
+
+#### 1.4 WebSocket API 端点 (`api/endpoints/websocket.py`)
+
+```python
+import json
+import uuid
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
+from typing import Optional
+import logging
+
+from services.websocket_service import connection_manager, websocket_service
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+@router.websocket("/ws")
+async def websocket_endpoint(
+    websocket: WebSocket,
+    user_id: Optional[str] = Query(None),
+    client_type: Optional[str] = Query("web")  # web, desktop
+):
+    """WebSocket连接端点"""
+    connection_id = str(uuid.uuid4())
+    
+    try:
+        # 建立连接
+        await connection_manager.connect(websocket, connection_id, user_id)
+        
+        # 发送欢迎消息
+        welcome_message = {
+            'type': 'welcome',
+            'connection_id': connection_id,
+            'client_type': client_type,
+            'message': '欢迎连接到QuizGazer实时服务'
+        }
+        await connection_manager.send_personal_message(welcome_message, connection_id)
+        
+        # 监听客户端消息
+        while True:
+            try:
+                # 接收消息
+                data = await websocket.receive_text()
+                message = json.loads(data)
+                
+                # 处理消息
+                await websocket_service.handle_client_message(websocket, connection_id, message)
+                
+            except WebSocketDisconnect:
+                logger.info(f"WebSocket客户端主动断开连接: {connection_id}")
+                break
+            except json.JSONDecodeError:
+                logger.warning(f"收到无效JSON消息: {connection_id}")
+                await connection_manager.send_personal_message({
+                    'type': 'error',
+                    'message': '无效的JSON格式'
+                }, connection_id)
+            except Exception as e:
+                logger.error(f"处理WebSocket消息时出错: {str(e)}")
+                await connection_manager.send_personal_message({
+                    'type': 'error',
+                    'message': '服务器内部错误'
+                }, connection_id)
+                
+    except Exception as e:
+        logger.error(f"WebSocket连接异常: {str(e)}")
+    finally:
+        # 清理连接
+        connection_manager.disconnect(connection_id)
+
+@router.get("/ws/stats")
+async def get_websocket_stats():
+    """获取WebSocket连接统计信息"""
+    return connection_manager.get_connections_info()
+
+@router.post("/ws/broadcast")
+async def broadcast_message(message: dict):
+    """广播消息给所有连接 (管理员功能)"""
+    try:
+        success_count = await connection_manager.broadcast({
+            'type': 'admin_broadcast',
+            'data': message,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+        return {
+            'success': True,
+            'message': f'消息已发送给 {success_count} 个连接'
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'message': f'广播失败: {str(e)}'
+        }
+```
+
+### 1.5 API 接口设计 (`api/endpoints/quiz.py`)
 
 ```python
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
@@ -524,7 +888,16 @@ async def create_quiz_record(
     """创建新的测验记录"""
     try:
         service = QuizService(db)
-        return await service.create_record(record)
+        new_record = await service.create_record(record)
+        
+        # 实时推送新记录给所有连接的前端
+        from services.websocket_service import connection_manager
+        await connection_manager.broadcast_new_quiz_record(
+            new_record.dict(), 
+            exclude_user_id=record.user_id
+        )
+        
+        return new_record
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -561,7 +934,16 @@ async def create_quiz_record_with_image(
         )
 
         service = QuizService(db)
-        return await service.create_record(record_data)
+        new_record = await service.create_record(record_data)
+        
+        # 实时推送新记录给所有连接的前端
+        from services.websocket_service import connection_manager
+        await connection_manager.broadcast_new_quiz_record(
+            new_record.dict(), 
+            exclude_user_id=user_id
+        )
+        
+        return new_record
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -802,7 +1184,8 @@ frontend/
 │   │   ├── StatsCard.vue       # 统计卡片
 │   │   └── ImagePreview.vue    # 图片预览组件
 │   ├── services/
-│   │   └── api.js              # API 请求封装
+│   │   ├── api.js              # API 请求封装
+│   │   └── websocket.js        # WebSocket 连接管理
 │   ├── utils/
 │   │   ├── date.js             # 日期格式化
 │   │   └── constants.js        # 常量定义
@@ -1063,12 +1446,13 @@ const deleteRecord = async () => {
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { Refresh, Download, Select } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import QuizList from '@/components/QuizList.vue'
 import SearchFilter from '@/components/SearchFilter.vue'
 import { getQuizRecords, getStats, exportRecords } from '@/services/api'
+import { useWebSocket } from '@/services/websocket'
 
 const records = ref([])
 const stats = ref(null)
@@ -1078,6 +1462,10 @@ const pageSize = ref(20)
 const totalCount = ref(0)
 const searchQuery = ref('')
 const dateFilter = ref(null)
+
+// WebSocket 相关
+const { websocketService, isConnected, connectionStatus } = useWebSocket()
+const realTimeEnabled = ref(true)
 
 // 选择和导出相关状态
 const selectedRecords = ref([])
@@ -1226,8 +1614,78 @@ const confirmExport = async () => {
   }
 }
 
-onMounted(() => {
+// WebSocket 事件处理
+const handleNewQuizRecord = (newRecord) => {
+  console.log('收到新的答题记录:', newRecord)
+  
+  // 如果在第一页且没有搜索过滤，则添加到列表顶部
+  if (currentPage.value === 1 && !searchQuery.value && !dateFilter.value) {
+    records.value.unshift(newRecord)
+    totalCount.value += 1
+    
+    // 限制显示数量，避免列表过长
+    if (records.value.length > pageSize.value) {
+      records.value = records.value.slice(0, pageSize.value)
+    }
+  } else {
+    // 显示提示，用户可以刷新查看
+    ElMessage({
+      message: '有新的答题记录，刷新页面查看最新内容',
+      type: 'info',
+      duration: 5000,
+      showClose: true
+    })
+  }
+}
+
+const handleStatsUpdate = (newStats) => {
+  console.log('收到统计信息更新:', newStats)
+  stats.value = newStats
+}
+
+// 初始化WebSocket连接
+const initWebSocket = async () => {
+  try {
+    await websocketService.connect()
+    
+    // 监听新记录
+    websocketService.on('new_quiz_record', handleNewQuizRecord)
+    
+    // 监听统计更新
+    websocketService.on('stats_update', handleStatsUpdate)
+    
+    console.log('✅ WebSocket连接已建立，开始接收实时更新')
+  } catch (error) {
+    console.error('WebSocket连接失败:', error)
+    ElMessage.warning('实时更新功能暂时不可用，但不影响正常使用')
+  }
+}
+
+// 切换实时更新
+const toggleRealTime = () => {
+  realTimeEnabled.value = !realTimeEnabled.value
+  
+  if (realTimeEnabled.value) {
+    initWebSocket()
+    ElMessage.success('实时更新已开启')
+  } else {
+    websocketService.disconnect()
+    ElMessage.info('实时更新已关闭')
+  }
+}
+
+onMounted(async () => {
   refreshData()
+  
+  // 初始化WebSocket连接
+  if (realTimeEnabled.value) {
+    await initWebSocket()
+  }
+})
+
+onUnmounted(() => {
+  // 清理WebSocket连接
+  websocketService.disconnect()
 })
 </script>
 ```
@@ -1313,7 +1771,304 @@ defineEmits(['load-more', 'deleted', 'selection-change'])
 </style>
 ```
 
-### 2.2 API 服务封装 (`services/api.js`)
+#### 2.2 WebSocket 服务封装 (`services/websocket.js`)
+
+```javascript
+import { ref, reactive } from 'vue'
+import { ElMessage, ElNotification } from 'element-plus'
+
+class WebSocketService {
+  constructor() {
+    this.ws = null
+    this.reconnectAttempts = 0
+    this.maxReconnectAttempts = 5
+    this.reconnectInterval = 3000
+    this.isConnecting = false
+    this.connectionId = null
+    
+    // 响应式状态
+    this.isConnected = ref(false)
+    this.connectionStatus = ref('disconnected') // disconnected, connecting, connected, error
+    this.lastMessage = ref(null)
+    this.stats = reactive({
+      totalConnections: 0,
+      totalUsers: 0
+    })
+    
+    // 事件监听器
+    this.listeners = {
+      'new_quiz_record': [],
+      'stats_update': [],
+      'connection_established': [],
+      'error': []
+    }
+  }
+
+  connect(userId = null, clientType = 'web') {
+    if (this.isConnecting || this.isConnected.value) {
+      return Promise.resolve()
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        this.isConnecting = true
+        this.connectionStatus.value = 'connecting'
+        
+        const wsUrl = this.buildWebSocketUrl(userId, clientType)
+        this.ws = new WebSocket(wsUrl)
+        
+        this.ws.onopen = (event) => {
+          console.log('✅ WebSocket连接已建立')
+          this.isConnected.value = true
+          this.connectionStatus.value = 'connected'
+          this.isConnecting = false
+          this.reconnectAttempts = 0
+          
+          // 发送心跳
+          this.startHeartbeat()
+          
+          resolve(event)
+        }
+        
+        this.ws.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data)
+            this.handleMessage(message)
+          } catch (error) {
+            console.error('解析WebSocket消息失败:', error)
+          }
+        }
+        
+        this.ws.onclose = (event) => {
+          console.log('WebSocket连接已关闭:', event.code, event.reason)
+          this.isConnected.value = false
+          this.connectionStatus.value = 'disconnected'
+          this.isConnecting = false
+          this.stopHeartbeat()
+          
+          // 自动重连
+          if (!event.wasClean && this.reconnectAttempts < this.maxReconnectAttempts) {
+            this.scheduleReconnect(userId, clientType)
+          }
+        }
+        
+        this.ws.onerror = (error) => {
+          console.error('WebSocket连接错误:', error)
+          this.connectionStatus.value = 'error'
+          this.isConnecting = false
+          
+          ElMessage.error('实时连接出现问题，正在尝试重连...')
+          reject(error)
+        }
+        
+      } catch (error) {
+        this.isConnecting = false
+        this.connectionStatus.value = 'error'
+        reject(error)
+      }
+    })
+  }
+
+  disconnect() {
+    if (this.ws) {
+      this.stopHeartbeat()
+      this.ws.close(1000, '用户主动断开连接')
+      this.ws = null
+      this.isConnected.value = false
+      this.connectionStatus.value = 'disconnected'
+    }
+  }
+
+  buildWebSocketUrl(userId, clientType) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const host = import.meta.env.VITE_WS_BASE_URL || 
+                 import.meta.env.VITE_API_BASE_URL?.replace(/^https?:/, '') || 
+                 window.location.host
+    
+    let url = `${protocol}//${host}/ws?client_type=${clientType}`
+    if (userId) {
+      url += `&user_id=${userId}`
+    }
+    
+    return url
+  }
+
+  scheduleReconnect(userId, clientType) {
+    this.reconnectAttempts++
+    const delay = this.reconnectInterval * Math.pow(2, this.reconnectAttempts - 1) // 指数退避
+    
+    console.log(`🔄 ${delay/1000}秒后尝试第${this.reconnectAttempts}次重连...`)
+    
+    setTimeout(() => {
+      if (!this.isConnected.value) {
+        this.connect(userId, clientType).catch(error => {
+          console.error('重连失败:', error)
+        })
+      }
+    }, delay)
+  }
+
+  handleMessage(message) {
+    this.lastMessage.value = message
+    
+    console.log('📨 收到WebSocket消息:', message.type)
+    
+    switch (message.type) {
+      case 'connection_established':
+        this.connectionId = message.connection_id
+        ElNotification({
+          title: '实时连接已建立',
+          message: '现在可以实时接收新的答题记录',
+          type: 'success',
+          duration: 3000
+        })
+        break
+        
+      case 'new_quiz_record':
+        this.handleNewQuizRecord(message.data)
+        break
+        
+      case 'stats_update':
+        this.handleStatsUpdate(message.data)
+        break
+        
+      case 'ping':
+        // 响应心跳
+        this.send({ type: 'pong' })
+        break
+        
+      case 'error':
+        console.error('服务器错误:', message.message)
+        ElMessage.error(`服务器错误: ${message.message}`)
+        break
+        
+      default:
+        console.log('未处理的消息类型:', message.type)
+    }
+    
+    // 触发监听器
+    this.triggerListeners(message.type, message)
+  }
+
+  handleNewQuizRecord(record) {
+    // 显示新记录通知
+    ElNotification({
+      title: '新的答题记录',
+      message: `题目: ${record.question_text.substring(0, 50)}...`,
+      type: 'info',
+      duration: 5000,
+      onClick: () => {
+        // 可以跳转到记录详情
+        console.log('点击查看记录:', record.id)
+      }
+    })
+    
+    // 触发监听器
+    this.triggerListeners('new_quiz_record', record)
+  }
+
+  handleStatsUpdate(stats) {
+    Object.assign(this.stats, stats)
+    this.triggerListeners('stats_update', stats)
+  }
+
+  send(message) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(message))
+      return true
+    } else {
+      console.warn('WebSocket未连接，无法发送消息')
+      return false
+    }
+  }
+
+  // 事件监听器管理
+  on(eventType, callback) {
+    if (!this.listeners[eventType]) {
+      this.listeners[eventType] = []
+    }
+    this.listeners[eventType].push(callback)
+    
+    // 返回取消监听的函数
+    return () => {
+      this.off(eventType, callback)
+    }
+  }
+
+  off(eventType, callback) {
+    if (this.listeners[eventType]) {
+      const index = this.listeners[eventType].indexOf(callback)
+      if (index > -1) {
+        this.listeners[eventType].splice(index, 1)
+      }
+    }
+  }
+
+  triggerListeners(eventType, data) {
+    if (this.listeners[eventType]) {
+      this.listeners[eventType].forEach(callback => {
+        try {
+          callback(data)
+        } catch (error) {
+          console.error('事件监听器执行错误:', error)
+        }
+      })
+    }
+  }
+
+  // 心跳机制
+  startHeartbeat() {
+    this.heartbeatInterval = setInterval(() => {
+      if (this.isConnected.value) {
+        this.send({ type: 'ping' })
+      }
+    }, 30000) // 每30秒发送一次心跳
+  }
+
+  stopHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval)
+      this.heartbeatInterval = null
+    }
+  }
+
+  // 订阅特定用户的更新
+  subscribeToUser(userId) {
+    return this.send({
+      type: 'subscribe_user',
+      user_id: userId
+    })
+  }
+
+  // 请求统计信息
+  requestStats() {
+    return this.send({
+      type: 'get_stats'
+    })
+  }
+}
+
+// 创建全局WebSocket服务实例
+export const websocketService = new WebSocketService()
+
+// Vue 3 组合式API插件
+export function useWebSocket() {
+  return {
+    websocketService,
+    isConnected: websocketService.isConnected,
+    connectionStatus: websocketService.connectionStatus,
+    stats: websocketService.stats,
+    connect: websocketService.connect.bind(websocketService),
+    disconnect: websocketService.disconnect.bind(websocketService),
+    on: websocketService.on.bind(websocketService),
+    off: websocketService.off.bind(websocketService)
+  }
+}
+
+export default websocketService
+```
+
+### 2.3 API 服务封装 (`services/api.js`)
 
 ```javascript
 import axios from 'axios'

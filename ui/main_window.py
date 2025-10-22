@@ -2,7 +2,8 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget,
     QLineEdit, QTextEdit, QLabel, QHBoxLayout, QFrame, QCheckBox, QStyleFactory,
-    QDialog, QComboBox, QFormLayout, QPushButton, QDialogButtonBox, QTabWidget
+    QDialog, QComboBox, QFormLayout, QPushButton, QDialogButtonBox, QTabWidget,
+    QMessageBox
 )
 from PySide6.QtCore import (Qt, QPoint, QPropertyAnimation, QEasingCurve, QSize,
                             QRunnable, Slot, Signal, QObject, QThreadPool)
@@ -11,6 +12,8 @@ from PySide6.QtGui import QIcon, QClipboard
 from core.screenshot_handler import take_screenshot, get_available_screens
 from utils.config_manager import get_app_config, save_app_config
 from core.ai_services import get_question_from_image, get_answer_from_text, get_direct_answer_from_image
+import time
+import asyncio
 
 # Import checkbox utilities for robust state handling
 try:
@@ -31,6 +34,76 @@ except ImportError as e:
     print(f"Using simplified knowledge base components: {e}")
     from ui.knowledge_base_panel_simple import KnowledgeBasePanel
     from ui.knowledge_base_settings_simple import KnowledgeBaseSettingsDialog
+
+# --- History Settings Dialog ---
+class HistorySettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("历史记录设置")
+        self.setMinimumWidth(400)
+        
+        # Get current settings
+        from utils.config_manager import get_backend_config
+        self.backend_config = get_backend_config()
+        
+        # Create form layout
+        layout = QFormLayout(self)
+        
+        # Enable history checkbox
+        self.enable_checkbox = QCheckBox()
+        self.enable_checkbox.setChecked(self.backend_config.get('enable_history', False))
+        layout.addRow("启用历史记录:", self.enable_checkbox)
+        
+        # Backend URL
+        self.url_input = QLineEdit()
+        self.url_input.setText(self.backend_config.get('base_url', 'http://localhost:8000'))
+        layout.addRow("后端服务地址:", self.url_input)
+        
+        # User ID (optional)
+        self.user_id_input = QLineEdit()
+        self.user_id_input.setText(self.backend_config.get('user_id', ''))
+        self.user_id_input.setPlaceholderText("可选，用于区分不同用户")
+        layout.addRow("用户标识:", self.user_id_input)
+        
+        # Test connection button
+        self.test_button = QPushButton("测试连接")
+        self.test_button.clicked.connect(self.test_connection)
+        layout.addRow("", self.test_button)
+        
+        # Buttons
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        layout.addRow(self.button_box)
+    
+    def test_connection(self):
+        """测试与后端服务的连接"""
+        try:
+            import httpx
+            base_url = self.url_input.text().strip()
+            if not base_url:
+                QMessageBox.warning(self, "错误", "请输入后端服务地址")
+                return
+            
+            # 测试健康检查端点
+            with httpx.Client(timeout=10) as client:
+                response = client.get(f"{base_url}/health")
+                if response.status_code == 200:
+                    QMessageBox.information(self, "成功", "连接测试成功！")
+                else:
+                    QMessageBox.warning(self, "错误", f"连接失败，状态码: {response.status_code}")
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"连接测试失败: {str(e)}")
+    
+    def get_settings(self):
+        """Returns the selected settings"""
+        return {
+            'enable_history': self.enable_checkbox.isChecked(),
+            'base_url': self.url_input.text().strip(),
+            'api_token': '',  # 简化，不需要token
+            'user_id': self.user_id_input.text().strip(),
+            'upload_timeout': 30  # 固定超时时间
+        }
 
 # --- Settings Dialog ---
 class SettingsDialog(QDialog):
@@ -124,6 +197,13 @@ class MainWindow(QMainWindow):
         self.threadpool = QThreadPool()
         self.threadpool.setMaxThreadCount(4)
         print(f"Multithreading with maximum {self.threadpool.maxThreadCount()} threads")
+        
+        # 历史记录相关变量
+        self.last_screenshot_bytes = None
+        self.ocr_start_time = None
+        self.ocr_end_time = None
+        self.answer_start_time = None
+        self.answer_end_time = None
         self.setup_ui()
         # 不再隐藏结果视图，默认显示
         
@@ -534,21 +614,35 @@ class MainWindow(QMainWindow):
         self.old_pos = self.pos()
 
     def on_capture_clicked(self):
-        # 保存当前窗口位置
+        # 保存当前窗口位置和状态
         current_pos = self.pos()
+        current_size = self.size()
+        was_visible = self.isVisible()
         
-        # 临时隐藏窗口进行截图
-        self.setWindowOpacity(0)  # 使用透明度而不是完全隐藏
-        QApplication.processEvents() # 确保窗口透明化生效
+        # 临时最小化窗口进行截图
+        self.showMinimized()
+        QApplication.processEvents()
+        
+        # 等待一小段时间确保窗口完全最小化
+        import time
+        time.sleep(0.1)
         
         screenshot_bytes = take_screenshot()
         
-        # 恢复窗口
-        self.setWindowOpacity(1)
-        self.move(current_pos)  # 确保窗口位置不变
+        # 恢复窗口状态
+        if was_visible:
+            self.showNormal()
+            self.resize(current_size)
+            self.move(current_pos)
+            self.raise_()
+            self.activateWindow()
         
         if not screenshot_bytes:
             return
+
+        # 保存截图数据和时间戳，用于历史记录上传
+        self.last_screenshot_bytes = screenshot_bytes
+        self.ocr_start_time = time.time()
 
         # 检查是否使用直接模式 - 使用健壮的状态检查
         direct_mode = is_checkbox_checked(self.direct_mode_checkbox)
@@ -559,6 +653,9 @@ class MainWindow(QMainWindow):
             self.answer_display.setText("Please wait...")
 
             force_search = is_checkbox_checked(self.force_search_checkbox)
+            
+            # 记录答案开始时间
+            self.answer_start_time = time.time()
             
             worker = Worker(get_direct_answer_from_image, screenshot_bytes, force_search=force_search)
             worker.signals.result.connect(self.on_direct_answer_ready)
@@ -576,6 +673,7 @@ class MainWindow(QMainWindow):
 
     def on_question_ready(self, question_text):
         """Handles the result from get_question_from_image."""
+        self.ocr_end_time = time.time()
         self.question_input.setPlainText(question_text)
 
         # 检查VLM是否成功识别到问题
@@ -600,12 +698,28 @@ class MainWindow(QMainWindow):
 
     def on_direct_answer_ready(self, answer_text):
         """处理直接模式的答案结果"""
+        self.answer_end_time = time.time()
+        self.ocr_end_time = self.answer_end_time  # 直接模式下OCR和答案生成是一起的
+        
         self.question_input.setPlainText("直接模式：已分析图片内容")
         self.answer_display.setText(answer_text)
+        
+        # 上传历史记录
+        self.upload_quiz_history_async(
+            question_text="直接模式：已分析图片内容",
+            answer_text=answer_text
+        )
 
     def on_answer_ready(self, answer_text):
         """Handles the result from get_answer_from_text."""
+        self.answer_end_time = time.time()
         self.answer_display.setText(answer_text)
+        
+        # 上传历史记录
+        self.upload_quiz_history_async(
+            question_text=self.question_input.toPlainText(),
+            answer_text=answer_text
+        )
 
     def on_ai_error(self, error_tuple):
         """Handles errors from AI services."""
@@ -645,6 +759,9 @@ class MainWindow(QMainWindow):
         if not question.strip() or "Extracting" in question:
             return
         self.answer_display.setText("Getting answer...")
+        
+        # 记录答案开始时间
+        self.answer_start_time = time.time()
         
         force_search = is_checkbox_checked(self.force_search_checkbox)
         
@@ -857,6 +974,81 @@ class MainWindow(QMainWindow):
         """Switch to knowledge base tab"""
         self.tab_widget.setCurrentIndex(1)  # Switch to knowledge base tab
     
+    def upload_quiz_history_async(self, question_text, answer_text):
+        """异步上传测验历史记录"""
+        if not hasattr(self, 'last_screenshot_bytes') or not self.last_screenshot_bytes:
+            return
+        
+        try:
+            # 计算处理时间
+            ocr_time = (self.ocr_end_time - self.ocr_start_time) if hasattr(self, 'ocr_end_time') and self.ocr_end_time else 0
+            answer_time = (self.answer_end_time - self.answer_start_time) if hasattr(self, 'answer_end_time') and self.answer_end_time else 0
+
+            # 获取模型信息
+            from utils.config_manager import get_model_config
+            vlm_config = get_model_config('vlm')
+            llm_config = get_model_config('llm')
+            
+            model_info = {
+                'vlm_model': vlm_config.get('model_name', 'unknown') if vlm_config else 'unknown',
+                'llm_model': llm_config.get('model_name', 'unknown') if llm_config else 'unknown'
+            }
+
+            # 在后台线程中执行上传
+            worker = Worker(
+                self._upload_history_sync,
+                self.last_screenshot_bytes,
+                question_text,
+                answer_text,
+                ocr_time,
+                answer_time,
+                model_info
+            )
+            worker.signals.result.connect(self.on_upload_result)
+            worker.signals.error.connect(self.on_upload_error)
+            self.threadpool.start(worker)
+
+        except Exception as e:
+            print(f"⚠️ [历史记录] 准备上传时发生错误: {str(e)}")
+
+    def _upload_history_sync(self, screenshot_bytes, question_text, answer_text, ocr_time, answer_time, model_info):
+        """同步版本的历史记录上传（在工作线程中运行）"""
+        try:
+            # 创建新的事件循环
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # 导入上传函数
+            from core.ai_services import upload_quiz_record
+            
+            # 运行异步上传
+            result = loop.run_until_complete(
+                upload_quiz_record(
+                    screenshot_bytes, question_text, answer_text,
+                    ocr_time, answer_time, model_info
+                )
+            )
+            
+            loop.close()
+            return result
+            
+        except Exception as e:
+            print(f"❌ [历史记录] 同步上传失败: {str(e)}")
+            return False
+
+    @Slot(object)
+    def on_upload_result(self, result):
+        """处理历史记录上传结果"""
+        if result:
+            print("✅ [历史记录] 上传成功")
+        else:
+            print("⚠️ [历史记录] 上传失败，但不影响正常使用")
+
+    @Slot(tuple)
+    def on_upload_error(self, error_tuple):
+        """处理历史记录上传错误"""
+        print(f"⚠️ [历史记录] 上传异常: {error_tuple[1]}")
+
     def show_settings(self):
         """Shows the settings dialog"""
         # Create a menu to choose between general settings and knowledge base settings
@@ -866,6 +1058,7 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         general_action = menu.addAction("常规设置")
         kb_action = menu.addAction("知识库设置")
+        history_action = menu.addAction("历史记录设置")
         
         # Show menu at button position
         button_pos = self.settings_button.mapToGlobal(QPoint(0, self.settings_button.height()))
@@ -880,6 +1073,13 @@ class MainWindow(QMainWindow):
         elif action == kb_action:
             dialog = KnowledgeBaseSettingsDialog(self)
             dialog.exec()
+        elif action == history_action:
+            dialog = HistorySettingsDialog(self)
+            if dialog.exec():
+                # Save settings if dialog was accepted
+                from utils.config_manager import save_backend_config
+                settings = dialog.get_settings()
+                save_backend_config(settings)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

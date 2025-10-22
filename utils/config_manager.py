@@ -3,6 +3,38 @@ import os
 from typing import Dict, Optional, Any
 import sys
 
+def safe_read_config(config: configparser.ConfigParser, config_path: str) -> bool:
+    """
+    安全地读取配置文件，处理编码问题
+    
+    Args:
+        config: ConfigParser实例
+        config_path: 配置文件路径
+        
+    Returns:
+        bool: 是否成功读取
+    """
+    try:
+        # 首先尝试UTF-8编码
+        config.read(config_path, encoding='utf-8')
+        return True
+    except UnicodeDecodeError:
+        try:
+            # 如果UTF-8失败，尝试GBK编码
+            config.read(config_path, encoding='gbk')
+            return True
+        except UnicodeDecodeError:
+            try:
+                # 最后尝试系统默认编码
+                config.read(config_path)
+                return True
+            except Exception as e:
+                print(f"Error reading config file {config_path}: {e}")
+                return False
+    except Exception as e:
+        print(f"Error reading config file {config_path}: {e}")
+        return False
+
 def get_config_path() -> str:
     """
     获取 config.ini 的绝对路径，智能适应开发环境和 PyInstaller 打包环境。
@@ -36,7 +68,9 @@ def get_app_config():
         print(f"Error: config.ini not found at {config_path}")
         return {}
         
-    config.read(config_path)
+    if not safe_read_config(config, config_path):
+        print(f"Error: Failed to read config.ini at {config_path}")
+        return {}
     
     # Get app settings with defaults
     if 'app' not in config:
@@ -93,7 +127,9 @@ def get_model_config(service_type):
         print(f"Error: config.ini not found at {config_path}")
         return None
         
-    config.read(config_path)
+    if not safe_read_config(config, config_path):
+        print(f"Error: Failed to read config.ini at {config_path}")
+        return None
 
     if service_type not in config:
         print(f"Error: Section [{service_type}] not found in config.ini.")
@@ -302,6 +338,75 @@ def get_reranker_api_config() -> Optional[Dict[str, Any]]:
         dict: A dictionary containing reranker API configuration details.
     """
     return get_api_config('reranker_api')
+
+
+def get_backend_config() -> Dict[str, Any]:
+    """
+    Reads the backend configuration from the config.ini file.
+    
+    Returns:
+        dict: A dictionary containing backend configuration details.
+    """
+    config = configparser.ConfigParser()
+    config_path = get_config_path()
+    
+    if not os.path.exists(config_path):
+        print(f"Error: config.ini not found at {config_path}")
+        return {
+            'base_url': 'http://localhost:8000',
+            'enable_history': False,
+            'user_id': ''
+        }
+        
+    if not safe_read_config(config, config_path):
+        print(f"Error: Failed to read config.ini at {config_path}")
+        return {
+            'base_url': 'http://localhost:8000',
+            'enable_history': False,
+            'user_id': ''
+        }
+    
+    if 'backend' not in config:
+        print("Warning: [backend] section not found in config.ini. Using defaults.")
+        return {
+            'base_url': 'http://localhost:8000',
+            'enable_history': False,
+            'user_id': ''
+        }
+    
+    return {
+        'base_url': config.get('backend', 'base_url', fallback='http://localhost:8000'),
+        'enable_history': config.getboolean('backend', 'enable_history', fallback=False),
+        'user_id': config.get('backend', 'user_id', fallback='')
+    }
+
+
+def save_backend_config(config_data: Dict[str, Any]):
+    """
+    Saves backend configuration to the config.ini file.
+    
+    Args:
+        config_data (dict): A dictionary containing backend configuration details.
+    """
+    config = configparser.ConfigParser()
+    config_path = get_config_path()
+    
+    if os.path.exists(config_path):
+        safe_read_config(config, config_path)
+    
+    if 'backend' not in config:
+        config.add_section('backend')
+    
+    # Update backend settings
+    for key, value in config_data.items():
+        if isinstance(value, bool):
+            config.set('backend', key, str(value).lower())
+        else:
+            config.set('backend', key, str(value))
+    
+    # Write to file with UTF-8 encoding
+    with open(config_path, 'w', encoding='utf-8') as configfile:
+        config.write(configfile)
 
 
 def save_knowledge_base_config(config_data: Dict[str, Any]):

@@ -13,3 +13,4 @@ pdfplumber
 langchain-text-splitters
 pandas
 pdf2image
+httpx

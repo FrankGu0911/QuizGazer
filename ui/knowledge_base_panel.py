@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QHeaderView, QFrame, QScrollArea
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QPen
 
 # Import knowledge base services
 try:
@@ -1594,6 +1594,8 @@ class KnowledgeBasePanel(QWidget):
             self.button_hover = "#505050"
             self.input_bg = "#3A3A3A"
             self.group_bg = "#353535"
+            self.checkbox_indicator = "#E0E0E0"
+            self.checkbox_bg = "#3A3A3A"
         else:
             # Light theme
             self.bg_color = "#FFFFFF"
@@ -1603,6 +1605,8 @@ class KnowledgeBasePanel(QWidget):
             self.button_hover = "#DCDCDC"
             self.input_bg = "#FFFFFF"
             self.group_bg = "#F5F5F5"
+            self.checkbox_indicator = "#333333"
+            self.checkbox_bg = "#FFFFFF"
 
         # Create style strings
         self.widget_style = f"""
@@ -1643,12 +1647,75 @@ class KnowledgeBasePanel(QWidget):
         """
 
         self.input_style = f"""
-            QLineEdit, QTextEdit, QListWidget {{
+            QLineEdit, QTextEdit {{
                 background-color: {self.input_bg};
                 border: 1px solid {self.border_color};
                 border-radius: 3px;
                 padding: 3px;
                 color: {self.text_color};
+            }}
+        """
+        
+        # Create checkbox style with checkmark
+        # Compact size for better layout
+        self.checkbox_style = f"""
+            QCheckBox {{
+                color: {self.text_color};
+                spacing: 5px;
+            }}
+            QCheckBox::indicator {{
+                width: 12px;
+                height: 12px;
+                border: 1px solid {self.border_color};
+                border-radius: 3px;
+                background-color: {self.checkbox_bg};
+            }}
+            QCheckBox::indicator:hover {{
+                border-color: #4A90E2;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: #4A90E2;
+                border-color: #4A90E2;
+                background-image: none;
+            }}
+            QCheckBox::indicator:unchecked {{
+                background-image: none;
+            }}
+        """
+        
+        # List widget style with checkbox support
+        # Compact padding for tighter layout
+        self.list_style = f"""
+            QListWidget {{
+                background-color: {self.input_bg};
+                border: 1px solid {self.border_color};
+                border-radius: 3px;
+                padding: 3px;
+                color: {self.text_color};
+            }}
+            QListWidget::item {{
+                padding: 1px 5px;
+                border-radius: 3px;
+            }}
+            QListWidget::item:hover {{
+                background-color: {self.button_hover};
+            }}
+            QListWidget::item:selected {{
+                background-color: {self.button_bg};
+            }}
+            QListWidget::indicator {{
+                width: 12px;
+                height: 12px;
+                border: 1px solid {self.border_color};
+                border-radius: 3px;
+                background-color: {self.checkbox_bg};
+            }}
+            QListWidget::indicator:hover {{
+                border-color: #4A90E2;
+            }}
+            QListWidget::indicator:checked {{
+                background-color: #4A90E2;
+                border-color: #4A90E2;
             }}
         """
 
@@ -1677,7 +1744,7 @@ class KnowledgeBasePanel(QWidget):
         self.status_label.setStyleSheet(f"color: {self.text_color};")
 
         self.enable_checkbox = QCheckBox("启用知识库")
-        self.enable_checkbox.setStyleSheet(f"color: {self.text_color};")
+        self.enable_checkbox.setStyleSheet(self.checkbox_style)
         # 先不连接信号，等初始化完成后再连接
 
         status_layout.addWidget(self.status_label)
@@ -1706,7 +1773,7 @@ class KnowledgeBasePanel(QWidget):
         # Collections list
         self.collections_list = QListWidget()
         self.collections_list.setMaximumHeight(150)
-        self.collections_list.setStyleSheet(self.input_style)
+        self.collections_list.setStyleSheet(self.list_style)
         self.collections_list.itemChanged.connect(
             self.on_collection_selection_changed)
 

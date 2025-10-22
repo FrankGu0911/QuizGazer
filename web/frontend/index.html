@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuizGazer 历史记录</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+    <style>
+        :root {
+            /* 浅色主题变量 */
+            --bg-primary: #f5f7fa;
+            --bg-secondary: #ffffff;
+            --text-primary: #303133;
+            --text-secondary: #606266;
+            --text-tertiary: #909399;
+            --border-color: #ebeef5;
+            --border-hover: #c0c4cc;
+            --shadow: 0 2px 8px rgba(0,0,0,0.1);
+            --card-bg: #ffffff;
+            --input-bg: #ffffff;
+            --button-bg: #f0f0f0;
+            --button-hover: #e0e0e0;
+        }
+
+        .dark-theme {
+            /* 深色主题变量 */
+            --bg-primary: #1a1a1a;
+            --bg-secondary: #2d2d2d;
+            --text-primary: #e0e0e0;
+            --text-secondary: #b0b0b0;
+            --text-tertiary: #888888;
+            --border-color: #404040;
+            --border-hover: #606060;
+            --shadow: 0 2px 8px rgba(0,0,0,0.3);
+            --card-bg: #2d2d2d;
+            --input-bg: #3a3a3a;
+            --button-bg: #404040;
+            --button-hover: #505050;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        #app {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .page-header {
+            background: var(--card-bg);
+            padding: 24px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
+        }
+
+        .page-header h1 {
+            font-size: 28px;
+            color: var(--text-primary);
+            margin-bottom: 16px;
+        }
+
+        .header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 16px;
+        }
+
+        .theme-selector {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .theme-selector label {
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .stats-summary {
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            text-align: center;
+            padding: 20px;
+            background: var(--card-bg) !important;
+            border: 1px solid var(--border-color) !important;
+        }
+
+        .stat-number {
+            font-size: 32px;
+            font-weight: bold;
+            color: #409eff;
+            margin-bottom: 8px;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: var(--text-tertiary);
+        }
+
+        .search-filter {
+            background: var(--card-bg);
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
+        }
+
+        .quiz-list-container {
+            background: var(--card-bg);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
+        }
+
+        .quiz-card {
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+            transition: all 0.3s;
+            background: var(--card-bg);
+        }
+
+        .quiz-card:hover {
+            box-shadow: var(--shadow);
+            border-color: var(--border-hover);
+        }
+
+        .quiz-card.selected {
+            border-color: #409eff;
+            background: rgba(64, 158, 255, 0.1);
+        }
+
+        .quiz-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .left-section {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .timestamp {
+            color: var(--text-tertiary);
+            font-size: 14px;
+        }
+
+        .quiz-content {
+            display: grid;
+            grid-template-columns: 200px 1fr;
+            gap: 16px;
+        }
+
+        .quiz-image {
+            width: 200px;
+            height: 150px;
+            object-fit: cover;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .text-section h4 {
+            color: var(--text-primary);
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .text-section p {
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: 12px;
+        }
+
+        .metadata {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .pagination {
+            margin-top: 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-tertiary);
+        }
+
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+
+        /* Element Plus 深色主题覆盖 */
+        .dark-theme .el-card {
+            background-color: var(--card-bg) !important;
+            border-color: var(--border-color) !important;
+            color: var(--text-primary) !important;
+        }
+
+        .dark-theme .el-input__wrapper {
+            background-color: var(--input-bg) !important;
+            box-shadow: 0 0 0 1px var(--border-color) inset !important;
+        }
+
+        .dark-theme .el-input__inner {
+            color: var(--text-primary) !important;
+        }
+
+        .dark-theme .el-button {
+            background-color: var(--button-bg) !important;
+            border-color: var(--border-color) !important;
+            color: var(--text-primary) !important;
+        }
+
+        .dark-theme .el-button:hover {
+            background-color: var(--button-hover) !important;
+        }
+
+        .dark-theme .el-button--primary {
+            background-color: #409eff !important;
+            border-color: #409eff !important;
+            color: #ffffff !important;
+        }
+
+        .dark-theme .el-button--primary:hover {
+            background-color: #66b1ff !important;
+            border-color: #66b1ff !important;
+        }
+
+        .dark-theme .el-select .el-input .el-input__wrapper {
+            background-color: var(--input-bg) !important;
+        }
+
+        .dark-theme .el-popper {
+            background-color: var(--card-bg) !important;
+            border-color: var(--border-color) !important;
+        }
+
+        .dark-theme .el-select-dropdown__item {
+            color: var(--text-primary) !important;
+        }
+
+        .dark-theme .el-select-dropdown__item:hover {
+            background-color: var(--button-hover) !important;
+        }
+
+        .dark-theme .el-checkbox__input.is-checked .el-checkbox__inner {
+            background-color: #409eff !important;
+            border-color: #409eff !important;
+        }
+
+        .dark-theme .el-checkbox__label {
+            color: var(--text-primary) !important;
+        }
+
+        .dark-theme .el-pagination button {
+            background-color: var(--button-bg) !important;
+            color: var(--text-primary) !important;
+            border-color: var(--border-color) !important;
+        }
+
+        .dark-theme .el-pagination .el-pager li {
+            background-color: var(--button-bg) !important;
+            color: var(--text-primary) !important;
+        }
+
+        .dark-theme .el-pagination .el-pager li.is-active {
+            background-color: #409eff !important;
+            color: #ffffff !important;
+        }
+
+        .dark-theme .el-dialog {
+            background-color: var(--card-bg) !important;
+            border: 1px solid var(--border-color) !important;
+        }
+
+        .dark-theme .el-dialog__header {
+            border-bottom: 1px solid var(--border-color) !important;
+        }
+
+        .dark-theme .el-dialog__title {
+            color: var(--text-primary) !important;
+        }
+
+        .dark-theme .el-form-item__label {
+            color: var(--text-primary) !important;
+        }
+
+        .dark-theme .el-radio__label {
+            color: var(--text-primary) !important;
+        }
+
+        .dark-theme .el-tag {
+            background-color: var(--button-bg) !important;
+            border-color: var(--border-color) !important;
+            color: var(--text-primary) !important;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <div class="page-header">
+            <div class="header-top">
+                <div>
+                    <h1>📚 答题历史记录</h1>
+                    <div style="font-size: 12px; color: var(--text-tertiary); margin-bottom: 10px;">
+                        实时连接状态: <span :style="{ color: wsConnected ? '#67c23a' : '#f56c6c' }">
+                            {{ wsConnected ? '🟢 已连接' : '🔴 未连接' }}
+                        </span>
+                    </div>
+                </div>
+                <!-- 主题切换器 -->
+                <div class="theme-selector">
+                    <label>🎨 主题:</label>
+                    <el-select v-model="themeMode" @change="setThemeMode" size="small" style="width: 100px;">
+                        <el-option label="☀️ 浅色" value="light"></el-option>
+                        <el-option label="🌙 深色" value="dark"></el-option>
+                        <el-option label="🖥️ 系统" value="system"></el-option>
+                    </el-select>
+                </div>
+            </div>
+            <div class="header-actions">
+                <el-button @click="refreshData" :loading="loading" type="primary">
+                    🔄 刷新
+                </el-button>
+                <el-button @click="selectAllRecords" type="info" plain>
+                    ☑️ {{ isAllSelected ? '取消全选' : '全选' }}
+                </el-button>
+                <el-button @click="showExportDialog" type="success" :disabled="selectedRecords.length === 0">
+                    📥 导出选中 ({{ selectedRecords.length }})
+                </el-button>
+            </div>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="stats-summary" v-if="stats">
+            <el-row :gutter="20">
+                <el-col :span="6">
+                    <el-card class="stat-card">
+                        <div class="stat-number">{{ stats.total_quizzes }}</div>
+                        <div class="stat-label">总答题数</div>
+                    </el-card>
+                </el-col>
+                <el-col :span="6">
+                    <el-card class="stat-card">
+                        <div class="stat-number">{{ stats.avg_processing_time?.toFixed(2) }}s</div>
+                        <div class="stat-label">平均耗时</div>
+                    </el-card>
+                </el-col>
+                <el-col :span="6">
+                    <el-card class="stat-card">
+                        <div class="stat-number">{{ stats.today_count }}</div>
+                        <div class="stat-label">今日答题</div>
+                    </el-card>
+                </el-col>
+                <el-col :span="6">
+                    <el-card class="stat-card">
+                        <div class="stat-number">{{ stats.this_week_count }}</div>
+                        <div class="stat-label">本周答题</div>
+                    </el-card>
+                </el-col>
+            </el-row>
+        </div>
+
+        <!-- 搜索过滤 -->
+        <div class="search-filter">
+            <el-input v-model="searchQuery" placeholder="🔍 搜索题目或答案..." @input="handleSearch" clearable>
+        </div>
+
+        <!-- 记录列表 -->
+        <div class="quiz-list-container">
+
+            
+            <div v-if="loading" class="loading">
+                <div style="font-size: 32px;">⏳</div>
+                <p>加载中...</p>
+            </div>
+
+            <div v-else-if="records.length === 0" class="empty-state">
+                <div class="empty-state-icon">📝</div>
+                <p>暂无答题记录</p>
+            </div>
+
+            <div v-else>
+                <div v-for="record in records" :key="record.id" class="quiz-card"
+                    :class="{ selected: selectedRecords.includes(record.id) }">
+
+                    <div class="quiz-header">
+                        <div class="left-section">
+                            <el-checkbox :model-value="selectedRecords.includes(record.id)"
+                                @change="toggleSelection(record.id)" />
+                            <span class="timestamp">{{ formatDate(record.timestamp) }}</span>
+                        </div>
+                        <div class="actions">
+                            <el-button @click="deleteRecord(record.id)" type="danger" size="small">
+                                🗑️ 删除
+                            </el-button>
+                        </div>
+                    </div>
+
+                    <div class="quiz-content">
+                        <div v-if="record.image_path">
+                            <el-image :src="getImageUrl(record.image_path)"
+                                :preview-src-list="[getImageUrl(record.image_path)]" fit="cover" class="quiz-image" />
+                        </div>
+
+                        <div class="text-section">
+                            <div>
+                                <h4>📋 题目</h4>
+                                <p>{{ record.question_text }}</p>
+                            </div>
+
+                            <div>
+                                <h4>💡 答案</h4>
+                                <p>{{ record.answer_text }}</p>
+                            </div>
+
+                            <div class="metadata">
+                                <el-tag size="small" v-if="record.vlm_model">VLM: {{ record.vlm_model }}</el-tag>
+                                <el-tag size="small" v-if="record.llm_model">LLM: {{ record.llm_model }}</el-tag>
+                                <el-tag size="small" v-if="record.total_time">
+                                    耗时: {{ record.total_time.toFixed(2) }}s
+                                </el-tag>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 分页 -->
+                <div class="pagination" v-if="totalPages > 1">
+                    <el-pagination v-model:current-page="currentPage" :page-size="pageSize" :total="totalCount"
+                        @current-change="handlePageChange" layout="prev, pager, next, total" />
+                </div>
+            </div>
+        </div>
+
+        <!-- 导出对话框 -->
+        <el-dialog v-model="exportDialogVisible" title="导出历史记录" width="500px">
+            <el-form label-width="100px">
+                <el-form-item label="导出格式">
+                    <el-radio-group v-model="exportFormat">
+                        <el-radio label="json">JSON</el-radio>
+                        <el-radio label="csv">CSV</el-radio>
+                    </el-radio-group>
+                </el-form-item>
+                <el-form-item label="导出数量">
+                    <el-tag type="info">{{ selectedRecords.length }} 条记录</el-tag>
+                </el-form-item>
+            </el-form>
+
+            <template #footer>
+                <el-button @click="exportDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="confirmExport" :loading="exporting">
+                    {{ exporting ? '导出中...' : '确认导出' }}
+                </el-button>
+            </template>
+        </el-dialog>
+    </div>
+
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/element-plus"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>
