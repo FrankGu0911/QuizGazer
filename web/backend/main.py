@@ -10,7 +10,9 @@ from fastapi.responses import FileResponse
 import os
 
 from database import engine, Base
-from api.endpoints import quiz, stats, websocket, health
+from api.endpoints import quiz, stats, websocket, health, auth
+from auth import get_current_user
+from fastapi import Depends
 
 # 创建数据库表
 Base.metadata.create_all(bind=engine)
@@ -41,14 +43,24 @@ FRONTEND_DIR = os.path.abspath(FRONTEND_DIR)
 
 # 注册API路由
 app.include_router(health.router)
-app.include_router(quiz.router)
-app.include_router(stats.router)
-app.include_router(websocket.router)
+app.include_router(auth.router)  # 认证路由（无需认证）
+app.include_router(quiz.router, dependencies=[Depends(get_current_user)])  # 需要认证
+app.include_router(stats.router, dependencies=[Depends(get_current_user)])  # 需要认证
+app.include_router(websocket.router)  # WebSocket路由
 
 # 挂载静态文件
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # 前端页面路由
+@app.get("/login")
+async def login_page():
+    """登录页面"""
+    login_path = os.path.join(FRONTEND_DIR, "login.html")
+    if os.path.exists(login_path):
+        return FileResponse(login_path)
+    else:
+        raise HTTPException(status_code=404, detail="登录页面未找到")
+
 @app.get("/")
 async def root():
     """根路径 - 重定向到前端页面"""
@@ -81,6 +93,15 @@ async def history_page():
 async def frontend_js():
     """前端JS文件"""
     js_path = os.path.join(FRONTEND_DIR, "app.js")
+    if os.path.exists(js_path):
+        return FileResponse(js_path, media_type="application/javascript")
+    else:
+        raise HTTPException(status_code=404, detail="JS文件未找到")
+
+@app.get("/login.js")
+async def login_js():
+    """登录页面JS文件"""
+    js_path = os.path.join(FRONTEND_DIR, "login.js")
     if os.path.exists(js_path):
         return FileResponse(js_path, media_type="application/javascript")
     else:

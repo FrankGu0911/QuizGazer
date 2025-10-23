@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - QuizGazer</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+    <style>
+        :root {
+            --bg-primary: #f5f7fa;
+            --bg-secondary: #ffffff;
+            --text-primary: #303133;
+            --text-secondary: #606266;
+            --border-color: #ebeef5;
+            --shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .dark-theme {
+            --bg-primary: #1a1a1a;
+            --bg-secondary: #2d2d2d;
+            --text-primary: #e0e0e0;
+            --text-secondary: #b0b0b0;
+            --border-color: #404040;
+            --shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        .login-container {
+            width: 100%;
+            max-width: 400px;
+            padding: 20px;
+        }
+
+        .login-card {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 40px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .login-header h1 {
+            font-size: 28px;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .login-header p {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .theme-toggle {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+        }
+
+        .dark-theme .el-input__wrapper {
+            background-color: #3a3a3a !important;
+            box-shadow: 0 0 0 1px #404040 inset !important;
+        }
+
+        .dark-theme .el-input__inner {
+            color: #e0e0e0 !important;
+        }
+
+        .dark-theme .el-form-item__label {
+            color: #e0e0e0 !important;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <div class="theme-toggle">
+            <el-button @click="toggleTheme" circle>
+                {{ isDarkMode ? '☀️' : '🌙' }}
+            </el-button>
+        </div>
+
+        <div class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <h1>📚 QuizGazer</h1>
+                <p>答题历史记录系统</p>
+            </div>
+
+            <el-form :model="loginForm" :rules="rules" ref="loginFormRef" label-width="0">
+                <el-form-item prop="username">
+                    <el-input v-model="loginForm.username" placeholder="用户名" size="large" prefix-icon="User"
+                        @keyup.enter="handleLogin" />
+                </el-form-item>
+
+                <el-form-item prop="password">
+                    <el-input v-model="loginForm.password" type="password" placeholder="密码" size="large"
+                        prefix-icon="Lock" show-password @keyup.enter="handleLogin" />
+                </el-form-item>
+
+                <el-form-item>
+                    <el-button type="primary" size="large" style="width: 100%;" @click="handleLogin"
+                        :loading="loading">
+                        {{ loading ? '登录中...' : '登录' }}
+                    </el-button>
+                </el-form-item>
+            </el-form>
+
+            <div style="text-align: center; margin-top: 20px; color: var(--text-secondary); font-size: 12px;">
+                <!-- <p>默认账号: admin / admin123</p> -->
+            </div>
+        </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/element-plus"></script>
+    <script src="login.js"></script>
+</body>
+
+</html>

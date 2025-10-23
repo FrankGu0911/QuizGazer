@@ -370,6 +370,9 @@
                 <el-button @click="showExportDialog" type="success" :disabled="selectedRecords.length === 0">
                     📥 导出选中 ({{ selectedRecords.length }})
                 </el-button>
+                <el-button @click="logout" type="warning" plain>
+                    👤 {{ currentUsername }} | 退出
+                </el-button>
             </div>
         </div>
 
@@ -457,8 +460,8 @@
                             </div>
 
                             <div class="metadata">
-                                <el-tag size="small" v-if="record.vlm_model">VLM: {{ record.vlm_model }}</el-tag>
-                                <el-tag size="small" v-if="record.llm_model">LLM: {{ record.llm_model }}</el-tag>
+                                <!-- <el-tag size="small" v-if="record.vlm_model">VLM: {{ record.vlm_model }}</el-tag>
+                                <el-tag size="small" v-if="record.llm_model">LLM: {{ record.llm_model }}</el-tag> -->
                                 <el-tag size="small" v-if="record.total_time">
                                     耗时: {{ record.total_time.toFixed(2) }}s
                                 </el-tag>
