@@ -830,7 +830,28 @@ Reranker API用于对搜索结果进行重新排序，提高搜索结果的相�
                 print("✅ [知识库设置] Reranker API 配置保存完成")
             
             print("🎉 [知识库设置] 所有设置保存成功！")
-            QMessageBox.information(self, "成功", "设置已保存并立即生效。")
+            
+            # 重新加载配置使其立即生效
+            print("🔄 [知识库设置] 重新加载配置...")
+            try:
+                if ai_services.reload_knowledge_base_config():
+                    print("✅ [知识库设置] 配置已重新加载，立即生效")
+                    QMessageBox.information(self, "成功", 
+                        "设置已保存并立即生效。\n\n"
+                        f"新的分块参数:\n"
+                        f"• chunk_size: {kb_config['chunk_size']}\n"
+                        f"• chunk_overlap: {kb_config['chunk_overlap']}")
+                else:
+                    print("⚠️ [知识库设置] 配置重载失败，需要重启程序")
+                    QMessageBox.information(self, "成功", 
+                        "设置已保存。\n\n"
+                        "注意：部分配置需要重启程序才能生效。")
+            except Exception as reload_error:
+                print(f"⚠️ [知识库设置] 配置重载异常: {reload_error}")
+                QMessageBox.information(self, "成功", 
+                    "设置已保存。\n\n"
+                    "注意：部分配置需要重启程序才能生效。")
+            
             self.accept()
             
         except Exception as e:

@@ -56,8 +56,18 @@ class EmbeddingService:
                 self.config.get('api_key') and 
                 self.config.get('model'))
     
-    def generate_embedding(self, text: str) -> Optional[List[float]]:
-        """Generate embedding for a single text."""
+    def generate_embedding(self, text: str, max_retries: int = 3, retry_delay: float = 1.0) -> Optional[List[float]]:
+        """
+        Generate embedding for a single text with retry mechanism.
+        
+        Args:
+            text: Text to generate embedding for
+            max_retries: Maximum number of retry attempts (default: 3)
+            retry_delay: Delay between retries in seconds (default: 1.0)
+        
+        Returns:
+            Embedding vector or None if all attempts fail
+        """
         if not self.is_available():
             self.logger.error("Embedding service not available")
             return None
@@ -69,55 +79,80 @@ class EmbeddingService:
                 self.logger.debug("Using cached embedding")
                 return cached_embedding
         
-        try:
-            # Prepare API request
-            data = {
-                'model': self.config['model'],
-                'input': text
-            }
-            
-            # Make API request
-            text_preview = text[:100] + "..." if len(text) > 100 else text
-            self.logger.debug(f"Generating embedding for text: {text_preview}")
-            
-            request_start = time.time()
-            response = self.session.post(
-                self.config['endpoint'],
-                json=data,
-                timeout=self.config.get('timeout', 30)
-            )
-            request_time = time.time() - request_start
-            
-            response.raise_for_status()
-            result = response.json()
-            
-            # Extract embedding from response
-            if 'data' in result and len(result['data']) > 0:
-                embedding = result['data'][0].get('embedding', [])
-                self.logger.debug(f"Generated embedding with {len(embedding)} dimensions in {request_time:.2f}s")
+        # Retry loop
+        for attempt in range(max_retries):
+            try:
+                # Prepare API request
+                data = {
+                    'model': self.config['model'],
+                    'input': text
+                }
                 
-                # Cache the embedding
-                if self.cache and embedding:
-                    self.cache.cache_embedding(text, embedding, self.config.get('model', 'default'))
+                # Make API request
+                text_preview = text[:100] + "..." if len(text) > 100 else text
+                if attempt > 0:
+                    self.logger.info(f"Retry attempt {attempt + 1}/{max_retries} for text: {text_preview}")
+                else:
+                    self.logger.debug(f"Generating embedding for text: {text_preview}")
                 
-                return embedding
-            else:
-                self.logger.error(f"Invalid embedding API response format: {result}")
-                print(f"❌ [Embedding] API响应格式错误: {result}")
+                request_start = time.time()
+                response = self.session.post(
+                    self.config['endpoint'],
+                    json=data,
+                    timeout=self.config.get('timeout', 30)
+                )
+                request_time = time.time() - request_start
+                
+                response.raise_for_status()
+                result = response.json()
+                
+                # Extract embedding from response
+                if 'data' in result and len(result['data']) > 0:
+                    embedding = result['data'][0].get('embedding', [])
+                    self.logger.debug(f"Generated embedding with {len(embedding)} dimensions in {request_time:.2f}s")
+                    
+                    # Cache the embedding
+                    if self.cache and embedding:
+                        self.cache.cache_embedding(text, embedding, self.config.get('model', 'default'))
+                    
+                    return embedding
+                else:
+                    self.logger.error(f"Invalid embedding API response format: {result}")
+                    print(f"❌ [Embedding] API响应格式错误: {result}")
+                    # Don't retry on invalid response format
+                    return None
+                    
+            except requests.exceptions.Timeout as e:
+                self.logger.warning(f"Embedding API request timeout (attempt {attempt + 1}/{max_retries}): {e}")
+                print(f"⏰ [Embedding] API请求超时 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    print(f"   🔄 等待 {retry_delay}s 后重试...")
+                    time.sleep(retry_delay)
+                    continue
                 return None
                 
-        except requests.exceptions.Timeout as e:
-            self.logger.error(f"Embedding API request timeout: {e}")
-            print(f"⏰ [Embedding] API请求超时: {e}")
-            return None
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"Embedding API request failed: {e}")
-            print(f"🌐 [Embedding] API请求失败: {e}")
-            return None
-        except Exception as e:
-            self.logger.error(f"Failed to generate embedding: {e}")
-            print(f"❌ [Embedding] 生成向量失败: {e}")
-            return None
+            except requests.exceptions.RequestException as e:
+                self.logger.warning(f"Embedding API request failed (attempt {attempt + 1}/{max_retries}): {e}")
+                print(f"🌐 [Embedding] API请求失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    print(f"   🔄 等待 {retry_delay}s 后重试...")
+                    time.sleep(retry_delay)
+                    continue
+                return None
+                
+            except Exception as e:
+                self.logger.error(f"Failed to generate embedding (attempt {attempt + 1}/{max_retries}): {e}")
+                print(f"❌ [Embedding] 生成向量失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    print(f"   🔄 等待 {retry_delay}s 后重试...")
+                    time.sleep(retry_delay)
+                    continue
+                return None
+        
+        # All retries exhausted
+        self.logger.error(f"All {max_retries} retry attempts exhausted for embedding generation")
+        print(f"❌ [Embedding] 所有 {max_retries} 次重试均失败")
+        return None
     
     def generate_embeddings_batch(self, texts: List[str], batch_size: int = 10, max_workers: int = 3, progress_callback=None) -> List[Optional[List[float]]]:
         """Generate embeddings for multiple texts in batches."""
@@ -128,9 +163,15 @@ class EmbeddingService:
             self.logger.error("Embedding service not available")
             return [None] * len(texts)
         
+        # Get retry settings from config
+        max_retries = self.config.get('max_retries', 3)
+        retry_delay = self.config.get('retry_delay', 1.0)
+        
         print(f"🔤 [Embedding] 开始生成 {len(texts)} 个文本的向量")
         print(f"   - 批次大小: {batch_size}")
         print(f"   - 并发数: {max_workers}")
+        print(f"   - 最大重试次数: {max_retries}")
+        print(f"   - 重试延迟: {retry_delay}s")
         print(f"   - API端点: {self.config.get('endpoint', 'N/A')}")
         print(f"   - 模型: {self.config.get('model', 'N/A')}")
         
@@ -149,14 +190,15 @@ class EmbeddingService:
             
             # Use thread pool for concurrent requests within batch
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Submit tasks
+                # Submit tasks with retry parameters
                 future_to_index = {
-                    executor.submit(self.generate_embedding, text): (idx, text)
+                    executor.submit(self.generate_embedding, text, max_retries, retry_delay): (idx, text)
                     for idx, text in zip(batch_indices, batch_texts)
                 }
                 
                 # Collect results
                 batch_successful = 0
+                batch_failed_indices = []
                 for future in as_completed(future_to_index):
                     idx, text = future_to_index[future]
                     try:
@@ -165,15 +207,21 @@ class EmbeddingService:
                         if embedding is not None:
                             batch_successful += 1
                         else:
-                            print(f"   ⚠️ [Embedding] 索引 {idx} 生成失败")
-                            self.logger.warning(f"Failed to generate embedding for text at index {idx}")
+                            batch_failed_indices.append(idx)
+                            print(f"   ⚠️ [Embedding] 索引 {idx} 生成失败（已重试）")
+                            self.logger.warning(f"Failed to generate embedding for text at index {idx} after retries")
                     except Exception as e:
+                        batch_failed_indices.append(idx)
                         print(f"   ❌ [Embedding] 索引 {idx} 异常: {e}")
                         self.logger.error(f"Exception generating embedding for text at index {idx}: {e}")
                         embeddings[idx] = None
             
             batch_time = time.time() - batch_start_time
             print(f"   ✅ [Embedding] 批次 {batch_num} 完成: {batch_successful}/{len(batch_texts)} 成功 (耗时: {batch_time:.2f}s)")
+            
+            # Show failed indices if any
+            if batch_failed_indices:
+                print(f"   ⚠️ [Embedding] 失败的索引: {batch_failed_indices}")
             
             # Call progress callback if provided
             if progress_callback:

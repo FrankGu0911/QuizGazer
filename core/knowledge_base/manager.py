@@ -715,6 +715,36 @@ class KnowledgeBaseManager:
             self.logger.error(f"Knowledge search failed: {e}")
             return []
     
+    def reload_config(self):
+        """重新加载配置并更新文档处理器参数"""
+        self.logger.info("重新加载知识库配置...")
+        
+        try:
+            # 重新读取配置
+            self.kb_config = get_knowledge_base_config() if get_knowledge_base_config else {}
+            
+            # 更新文档处理器的分块参数
+            new_chunk_size = self.kb_config.get('chunk_size', 1000)
+            new_chunk_overlap = self.kb_config.get('chunk_overlap', 200)
+            
+            self.logger.info(f"更新分块参数: chunk_size={new_chunk_size}, chunk_overlap={new_chunk_overlap}")
+            
+            # 重新初始化文档处理器
+            self.document_processor = DocumentProcessor(
+                chunk_size=new_chunk_size,
+                chunk_overlap=new_chunk_overlap
+            )
+            
+            # 更新任务管理器中的文档处理器引用
+            self.task_manager._document_processor = self.document_processor
+            
+            self.logger.info("配置重载完成")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"配置重载失败: {e}")
+            return False
+    
     def shutdown(self):
         """Shutdown the knowledge base manager and clean up resources."""
         self.logger.info("Shutting down KnowledgeBaseManager...")

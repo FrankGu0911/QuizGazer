@@ -66,6 +66,10 @@ api_key = your_embedding_api_key_here
 model = text-embedding-ada-002
 # Request timeout in seconds
 timeout = 30
+# Maximum retry attempts for failed requests
+max_retries = 3
+# Delay between retries in seconds
+retry_delay = 1.0
 
 # Configuration for Reranker API
 [reranker_api]

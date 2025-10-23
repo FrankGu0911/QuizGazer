@@ -88,6 +88,26 @@ def get_knowledge_base_manager():
     """Get the global knowledge base manager instance."""
     return _knowledge_base_manager
 
+def reload_knowledge_base_config():
+    """重新加载知识库配置（用于配置修改后立即生效）"""
+    global _knowledge_base_manager
+    
+    if _knowledge_base_manager is None:
+        print("⚠️ [AI服务] 知识库管理器未初始化")
+        return False
+    
+    try:
+        print("🔄 [AI服务] 重新加载知识库配置...")
+        success = _knowledge_base_manager.reload_config()
+        if success:
+            print("✅ [AI服务] 知识库配置重载成功")
+        else:
+            print("❌ [AI服务] 知识库配置重载失败")
+        return success
+    except Exception as e:
+        print(f"❌ [AI服务] 知识库配置重载异常: {e}")
+        return False
+
 def is_knowledge_base_available():
     """Check if knowledge base is available and initialized."""
     return KNOWLEDGE_BASE_AVAILABLE and _rag_pipeline is not None

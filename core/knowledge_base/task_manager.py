@@ -448,17 +448,53 @@ class BackgroundTaskManager:
                         
                         print(f"⏱️ [任务管理器] Embedding生成耗时: {embedding_time:.2f}s")
                         
-                        # Filter out failed embeddings
+                        # Filter out failed embeddings and collect failed indices
                         valid_chunks = []
                         valid_embeddings = []
+                        failed_indices = []
+                        failed_chunks = []
+                        
                         for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
                             if embedding is not None:
                                 valid_chunks.append(chunk)
                                 valid_embeddings.append(embedding)
                             else:
+                                failed_indices.append(i)
+                                failed_chunks.append(chunk)
                                 print(f"   ⚠️ [任务管理器] 块 {i} 的向量生成失败")
                         
                         print(f"✅ [任务管理器] 有效向量: {len(valid_embeddings)}/{len(chunks)}")
+                        
+                        # Retry failed embeddings once more with longer delay
+                        if failed_indices and len(failed_indices) < len(chunks) * 0.5:  # Only retry if less than 50% failed
+                            print(f"🔄 [任务管理器] 对 {len(failed_indices)} 个失败的块进行二次重试...")
+                            self._notify_progress(task_id, 0.55, f"重试 {len(failed_indices)} 个失败的向量...")
+                            
+                            time.sleep(2)  # Wait 2 seconds before retry
+                            
+                            retry_texts = [chunk.content for chunk in failed_chunks]
+                            retry_embeddings = embedding_service.generate_embeddings_batch(
+                                retry_texts,
+                                batch_size=5,  # Smaller batch size for retry
+                                max_workers=2,  # Fewer workers for retry
+                                progress_callback=None
+                            )
+                            
+                            # Add successful retries to valid lists
+                            retry_success_count = 0
+                            for i, (chunk, embedding) in enumerate(zip(failed_chunks, retry_embeddings)):
+                                if embedding is not None:
+                                    valid_chunks.append(chunk)
+                                    valid_embeddings.append(embedding)
+                                    retry_success_count += 1
+                                    print(f"   ✅ [任务管理器] 块 {failed_indices[i]} 重试成功")
+                                else:
+                                    print(f"   ❌ [任务管理器] 块 {failed_indices[i]} 重试仍然失败")
+                            
+                            print(f"🔄 [任务管理器] 重试结果: {retry_success_count}/{len(failed_indices)} 成功")
+                            print(f"✅ [任务管理器] 最终有效向量: {len(valid_embeddings)}/{len(chunks)}")
+                        elif failed_indices:
+                            print(f"⚠️ [任务管理器] 失败率过高 ({len(failed_indices)}/{len(chunks)})，跳过重试")
                         
                         if valid_embeddings:
                             self._notify_progress(task_id, 0.6, f"开始存储 {len(valid_embeddings)} 个向量...")
