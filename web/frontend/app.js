@@ -237,19 +237,26 @@ const app = createApp({
                 let content, filename, mimeType;
 
                 if (exportFormat.value === 'json') {
-                    content = JSON.stringify(selectedData, null, 2);
+                    // 移除模型信息
+                    const exportData = selectedData.map(r => ({
+                        id: r.id,
+                        timestamp: r.timestamp,
+                        question_text: r.question_text,
+                        answer_text: r.answer_text,
+                        total_time: r.total_time,
+                        image_path: r.image_path
+                    }));
+                    content = JSON.stringify(exportData, null, 2);
                     filename = `quiz_records_${Date.now()}.json`;
                     mimeType = 'application/json';
                 } else if (exportFormat.value === 'csv') {
-                    // 简单的CSV导出
-                    const headers = ['ID', '时间', '题目', '答案', 'VLM模型', 'LLM模型', '处理时间'];
+                    // 简单的CSV导出（不包含模型信息）
+                    const headers = ['ID', '时间', '题目', '答案', '处理时间'];
                     const rows = selectedData.map(r => [
                         r.id,
                         formatDate(r.timestamp),
                         `"${r.question_text.replace(/"/g, '""')}"`,
                         `"${r.answer_text.replace(/"/g, '""')}"`,
-                        r.vlm_model || '',
-                        r.llm_model || '',
                         r.total_time?.toFixed(2) || ''
                     ]);
 
