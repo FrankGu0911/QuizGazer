@@ -370,6 +370,9 @@
                 <el-button @click="showExportDialog" type="success" :disabled="selectedRecords.length === 0">
                     📥 导出选中 ({{ selectedRecords.length }})
                 </el-button>
+                <el-button @click="goToChromaDB" type="info">
+                    🔍 ChromaDB 查询
+                </el-button>
                 <el-button @click="logout" type="warning" plain>
                     👤 {{ currentUsername }} | 退出
                 </el-button>
@@ -408,7 +411,18 @@
 
         <!-- 搜索过滤 -->
         <div class="search-filter">
-            <el-input v-model="searchQuery" placeholder="🔍 搜索题目或答案..." @input="handleSearch" clearable>
+            <el-row :gutter="16">
+                <el-col :span="16">
+                    <el-input v-model="searchQuery" placeholder="🔍 搜索题目或答案..." @input="handleSearch" clearable>
+                    </el-input>
+                </el-col>
+                <el-col :span="8">
+                    <el-select v-model="selectedUser" placeholder="👤 筛选上传者" @change="handleUserFilter" clearable style="width: 100%;">
+                        <el-option label="全部用户" value=""></el-option>
+                        <el-option v-for="user in userList" :key="user" :label="user" :value="user"></el-option>
+                    </el-select>
+                </el-col>
+            </el-row>
         </div>
 
         <!-- 记录列表 -->
@@ -434,6 +448,7 @@
                             <el-checkbox :model-value="selectedRecords.includes(record.id)"
                                 @change="toggleSelection(record.id)" />
                             <span class="timestamp">{{ formatDate(record.timestamp) }}</span>
+                            <el-tag v-if="record.user_id" size="small" type="info">👤 {{ record.user_id }}</el-tag>
                         </div>
                         <div class="actions">
                             <el-button @click="deleteRecord(record.id)" type="danger" size="small">

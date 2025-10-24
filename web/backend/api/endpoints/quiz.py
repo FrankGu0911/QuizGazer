@@ -13,6 +13,7 @@ import aiofiles
 from database import get_async_db
 from models import QuizRecord
 from schemas import QuizRecordCreate, QuizRecordResponse, QuizRecordList
+from typing import List
 
 # 公开路由（不需要认证，给客户端使用）
 public_router = APIRouter(prefix="/api/quiz", tags=["quiz-public"])
@@ -82,6 +83,18 @@ async def create_quiz_record_with_image(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@protected_router.get("/users")
+async def get_users(db: AsyncSession = Depends(get_async_db)):
+    """获取所有上传过记录的用户列表"""
+    try:
+        query = select(QuizRecord.user_id).distinct().where(QuizRecord.user_id.isnot(None))
+        result = await db.execute(query)
+        users = [row[0] for row in result.all()]
+        return {"users": users}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @protected_router.get("/records", response_model=QuizRecordList)
 async def get_quiz_records(
     skip: int = 0,
@@ -144,6 +157,40 @@ async def get_quiz_record(
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
     return record
+
+
+@protected_router.get("/records/export", response_model=List[QuizRecordResponse])
+async def export_all_quiz_records(
+    user_id: Optional[str] = None,
+    search: Optional[str] = None,
+    db: AsyncSession = Depends(get_async_db)
+):
+    """导出所有测验记录（不分页）"""
+    try:
+        # 构建查询
+        query = select(QuizRecord)
+        
+        # 用户过滤
+        if user_id:
+            query = query.where(QuizRecord.user_id == user_id)
+        
+        # 搜索过滤
+        if search:
+            query = query.where(
+                or_(
+                    QuizRecord.question_text.contains(search),
+                    QuizRecord.answer_text.contains(search)
+                )
+            )
+        
+        # 按时间倒序查询所有记录
+        query = query.order_by(desc(QuizRecord.timestamp))
+        result = await db.execute(query)
+        records = result.scalars().all()
+        
+        return records
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @protected_router.delete("/record/{record_id}")

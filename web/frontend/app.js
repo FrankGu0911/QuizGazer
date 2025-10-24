@@ -18,6 +18,8 @@ const app = createApp({
         const exportFormat = ref('json');
         const exporting = ref(false);
         const wsConnected = ref(false);
+        const userList = ref([]);
+        const selectedUser = ref('');
         let websocket = null;
 
         // 主题相关
@@ -96,6 +98,27 @@ const app = createApp({
             }
         };
 
+        // 加载用户列表
+        const loadUsers = async () => {
+            if (!checkAuth()) return;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/quiz/users`, {
+                    headers: getAuthHeaders()
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+                userList.value = data.users || [];
+            } catch (error) {
+                console.error('加载用户列表失败:', error);
+                handleAuthError(error);
+            }
+        };
+
         // 加载记录
         const loadRecords = async () => {
             if (!checkAuth()) return;
@@ -109,6 +132,10 @@ const app = createApp({
 
                 if (searchQuery.value) {
                     params.append('search', searchQuery.value);
+                }
+
+                if (selectedUser.value) {
+                    params.append('user_id', selectedUser.value);
                 }
 
                 const response = await fetch(`${API_BASE_URL}/api/quiz/records?${params}`, {
@@ -161,6 +188,12 @@ const app = createApp({
 
         // 搜索
         const handleSearch = () => {
+            currentPage.value = 1;
+            loadRecords();
+        };
+
+        // 用户筛选
+        const handleUserFilter = () => {
             currentPage.value = 1;
             loadRecords();
         };
@@ -288,8 +321,26 @@ const app = createApp({
 
         // 格式化日期
         const formatDate = (dateStr) => {
-            const date = new Date(dateStr);
-            return date.toLocaleString('zh-CN');
+            // 如果时间字符串没有时区信息，添加 'Z' 表示 UTC 时间
+            let isoString = dateStr;
+            if (!dateStr.endsWith('Z') && !dateStr.includes('+') && !dateStr.includes('T')) {
+                // 格式如 "2025-10-24 02:15:31.134845"，需要转换为 ISO 格式
+                isoString = dateStr.replace(' ', 'T') + 'Z';
+            } else if (dateStr.includes('T') && !dateStr.endsWith('Z') && !dateStr.includes('+')) {
+                // 格式如 "2025-10-24T02:15:31.134845"，添加 Z
+                isoString = dateStr + 'Z';
+            }
+            
+            const date = new Date(isoString);
+            return date.toLocaleString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
         };
 
         // 获取图片URL
@@ -430,6 +481,7 @@ const app = createApp({
             updateTheme();
             setupSystemThemeListener();
 
+            loadUsers();
             refreshData();
             connectWebSocket();
 
@@ -439,6 +491,11 @@ const app = createApp({
 
         // 获取当前用户名
         const currentUsername = ref(localStorage.getItem('username') || '用户');
+
+        // 跳转到 ChromaDB 查询页面
+        const goToChromaDB = () => {
+            window.location.href = '/chromadb';
+        };
 
         return {
             records,
@@ -465,13 +522,18 @@ const app = createApp({
             formatDate,
             getImageUrl,
             wsConnected,
+            // 用户筛选
+            userList,
+            selectedUser,
+            handleUserFilter,
             // 主题相关
             themeMode,
             isDarkMode,
             setThemeMode,
             // 认证相关
             currentUsername,
-            logout
+            logout,
+            goToChromaDB
         };
     }
 });

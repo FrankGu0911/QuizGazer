@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 import os
 
 from database import engine, Base
-from api.endpoints import quiz, stats, websocket, health, auth
+from api.endpoints import quiz, stats, websocket, health, auth, chromadb
 from auth import get_current_user
 from fastapi import Depends
 
@@ -50,6 +50,7 @@ app.include_router(quiz.public_router)  # 客户端接口，无需认证
 app.include_router(quiz.protected_router, dependencies=[Depends(get_current_user)])  # Web界面接口，需要认证
 
 app.include_router(stats.router, dependencies=[Depends(get_current_user)])  # 需要认证
+app.include_router(chromadb.router, dependencies=[Depends(get_current_user)])  # ChromaDB查询，需要认证
 app.include_router(websocket.router)  # WebSocket路由
 
 # 挂载静态文件
@@ -92,6 +93,15 @@ async def history_page():
     """历史记录页面别名"""
     return await frontend_app()
 
+@app.get("/chromadb")
+async def chromadb_page():
+    """ChromaDB查询页面"""
+    chromadb_path = os.path.join(FRONTEND_DIR, "chromadb.html")
+    if os.path.exists(chromadb_path):
+        return FileResponse(chromadb_path)
+    else:
+        raise HTTPException(status_code=404, detail="ChromaDB页面未找到")
+
 # 静态文件服务 - 必须在最后，因为使用了通配符
 @app.get("/app.js")
 async def frontend_js():
@@ -106,6 +116,15 @@ async def frontend_js():
 async def login_js():
     """登录页面JS文件"""
     js_path = os.path.join(FRONTEND_DIR, "login.js")
+    if os.path.exists(js_path):
+        return FileResponse(js_path, media_type="application/javascript")
+    else:
+        raise HTTPException(status_code=404, detail="JS文件未找到")
+
+@app.get("/chromadb.js")
+async def chromadb_js():
+    """ChromaDB页面JS文件"""
+    js_path = os.path.join(FRONTEND_DIR, "chromadb.js")
     if os.path.exists(js_path):
         return FileResponse(js_path, media_type="application/javascript")
     else:
