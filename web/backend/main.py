@@ -44,7 +44,11 @@ FRONTEND_DIR = os.path.abspath(FRONTEND_DIR)
 # 注册API路由
 app.include_router(health.router)
 app.include_router(auth.router)  # 认证路由（无需认证）
-app.include_router(quiz.router, dependencies=[Depends(get_current_user)])  # 需要认证
+
+# Quiz路由 - 分开注册公开和需要认证的接口
+app.include_router(quiz.public_router)  # 客户端接口，无需认证
+app.include_router(quiz.protected_router, dependencies=[Depends(get_current_user)])  # Web界面接口，需要认证
+
 app.include_router(stats.router, dependencies=[Depends(get_current_user)])  # 需要认证
 app.include_router(websocket.router)  # WebSocket路由
 

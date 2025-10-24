@@ -14,10 +14,17 @@ from database import get_async_db
 from models import QuizRecord
 from schemas import QuizRecordCreate, QuizRecordResponse, QuizRecordList
 
-router = APIRouter(prefix="/api/quiz", tags=["quiz"])
+# 公开路由（不需要认证，给客户端使用）
+public_router = APIRouter(prefix="/api/quiz", tags=["quiz-public"])
+
+# 受保护路由（需要认证，给Web界面使用）
+protected_router = APIRouter(prefix="/api/quiz", tags=["quiz-protected"])
+
+# 保留旧的router以兼容（已废弃）
+router = protected_router
 
 
-@router.post("/record-with-image", response_model=QuizRecordResponse)
+@public_router.post("/record-with-image", response_model=QuizRecordResponse)
 async def create_quiz_record_with_image(
     question_text: str = Form(...),
     answer_text: str = Form(...),
@@ -75,7 +82,7 @@ async def create_quiz_record_with_image(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/records", response_model=QuizRecordList)
+@protected_router.get("/records", response_model=QuizRecordList)
 async def get_quiz_records(
     skip: int = 0,
     limit: int = 20,
@@ -125,7 +132,7 @@ async def get_quiz_records(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/record/{record_id}", response_model=QuizRecordResponse)
+@protected_router.get("/record/{record_id}", response_model=QuizRecordResponse)
 async def get_quiz_record(
     record_id: int,
     db: AsyncSession = Depends(get_async_db)
@@ -139,7 +146,7 @@ async def get_quiz_record(
     return record
 
 
-@router.delete("/record/{record_id}")
+@protected_router.delete("/record/{record_id}")
 async def delete_quiz_record(
     record_id: int,
     db: AsyncSession = Depends(get_async_db)
